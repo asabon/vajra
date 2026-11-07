@@ -81,9 +81,33 @@ vajra の主要コードは `skills/vajra/` 配下に配置されています。
   - `feature/*` や `pr/*` ブランチでハーネスファイル（`AGENTS.md`, `.agents/`, `.githooks/` 等）が変更されていないか検査。
 - **`.agents/scripts/check-no-japanese.mjs`**:
   - コアスクリプト（`skills/vajra/scripts/`）に日本語文字が混入していないか検査。
+- **`.agents/scripts/deploy-global-skill.mjs`**:
+  - Antigravity のグローバルスキル配置パス（`~/.gemini/config/skills/vajra/`）へ、指定ブランチ（デフォルト: `develop`）の最新コミットからクリーンにスキルを抽出・デプロイ。
+  - 開発作業ツリー（WIP）を直接 `skills.json` で参照することを防ぎ、常に安定版スキルを Antigravity で利用可能にする。
 - **`.githooks/` (Git フック)**:
   - `pre-commit`: `main` への直接コミットをブロック。
   - `pre-push`: `main` への直接 push をブロック、および `pr/*` ブランチへのハーネス・日本語混入を検査・遮断。
+
+---
+
+## 🚀 グローバルスキルのデプロイ運用 (Antigravity)
+
+日常利用する Antigravity に安定版の vajra メタスキルを提供する際は、以下のスクリプトを実行します。
+作業ツリーの未コミット変更や作業ブランチの状態に影響されず、クリーンな git コミットから安全にデプロイされます。
+
+```bash
+# develop ブランチの最新コミットをデプロイ
+node .agents/scripts/deploy-global-skill.mjs
+
+# 特定ブランチやコミットを指定してデプロイ
+node .agents/scripts/deploy-global-skill.mjs --ref feature/support-antigravity-harness
+
+# デプロイ内容の事前確認 (dry-run)
+node .agents/scripts/deploy-global-skill.mjs --dry-run
+```
+
+- **配置先**: `~/.gemini/config/skills/vajra`
+- **注意**: `~/.gemini/config/skills.json` でリポジトリの開発作業ツリー（`E:/work/vajra/skills`）を直接参照しないこと。
 
 ---
 
