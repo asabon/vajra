@@ -1,0 +1,59 @@
+#!/bin/sh
+
+zero="0000000000000000000000000000000000000000"
+
+while read local_ref local_oid remote_ref remote_oid
+do
+  # ブランチ削除の場合はスキップ
+  if [ "$local_oid" = "$zero" ]; then
+    continue
+  fi
+
+  # 1. main / master ブランチへの直接 push を防止する
+  if [ "$remote_ref" = "refs/heads/main" ] || [ "$remote_ref" = "refs/heads/master" ]; then
+    echo ""
+    echo "================================================================="
+    echo " [ERROR] Direct push to '$remote_ref' is forbidden!"
+    echo " Work on 'develop' branch or create a topic branch (e.g. pr/fix-xxx)."
+    echo "================================================================="
+    echo ""
+    exit 1
+  fi
+
+  # 2. 本家 PR 用トピックブランチ (pr/*) にローカルハーネスファイルが混入していないか検査
+  case "$remote_ref" in
+    refs/heads/pr/*)
+      forbidden_files=$(git ls-tree -r --name-only "$local_oid" 2>/dev/null | grep -E '^(AGENTS\.md|\.agents/|\.githooks/|scratch/)')
+      if [ -n "$forbidden_files" ]; then
+        echo ""
+        echo "================================================================="
+        echo " [ERROR] Forbidden AI harness files detected in '$remote_ref'!"
+        echo " Upstream PR branches must NEVER contain harness/local files."
+        echo "-----------------------------------------------------------------"
+        echo " Detected files:"
+        echo "$forbidden_files" | sed 's/^/   - /'
+        echo "-----------------------------------------------------------------"
+        echo " Please remove these files or cherry-pick only clean commits."
+        echo "================================================================="
+        echo ""
+        exit 1
+      fi
+
+      # 3. 本家 PR 用トピックブランチ (pr/*) の scripts に日本語文字が含まれていないか検査
+      japanese_lines=$(git grep -I -n -P '[\x{3040}-\x{309F}\x{30A0}-\x{30FF}\x{4E00}-\x{9FFF}\x{FF66}-\x{FF9F}]' "$local_oid" -- 'skills/vajra/scripts/**' 2>/dev/null)
+      if [ -n "$japanese_lines" ]; then
+        echo ""
+        echo "================================================================="
+        echo " [ERROR] Japanese characters detected in 'skills/vajra/scripts/' for '$remote_ref'!"
+        echo " Upstream code and comments must be strictly English."
+        echo "-----------------------------------------------------------------"
+        echo "$japanese_lines"
+        echo "================================================================="
+        echo ""
+        exit 1
+      fi
+      ;;
+  esac
+done
+
+exit 0
