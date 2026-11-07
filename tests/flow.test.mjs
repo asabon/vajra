@@ -964,6 +964,11 @@ test("Antigravity captures human gate reply and protects hooks via Cwd and multi
 
   const userPrompt = hook("user-prompt", { lastUserInput: "approved, please proceed" });
   assert.equal(userPrompt.status, 0);
+  const heard = stateOf(p).heard;
+  assert.ok(heard.some((entry) => entry.text === "approved, please proceed"));
+  const repeatPrompt = hook("user-prompt", { lastUserInput: "approved, please proceed" });
+  assert.equal(repeatPrompt.status, 0);
+  assert.deepEqual(stateOf(p).heard, heard);
 
   const ans = p.cli("answer", "approve", "--note", "user approved");
   assert.equal(ans.status, 0, ans.text);
