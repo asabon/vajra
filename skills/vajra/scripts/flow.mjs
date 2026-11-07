@@ -296,11 +296,11 @@ export function main(argv) {
     // The user's own message is kept before anything else, so it is there with lib/ broken.
     if (rest[0] === "user-prompt") {
       try {
-        const text = String(input.prompt ?? input.user_prompt ?? input.message ?? input.lastUserInput ?? "");
-        if (text.trim()) {
+        const text = String(input.prompt ?? input.user_prompt ?? input.message ?? input.lastUserInput ?? "").trim();
+        if (text) {
           const st = loadState(root);
           const lastHeard = (st.heard || []).at(-1)?.text;
-          if (norm(lastHeard) !== norm(text)) hear(root, [text]);
+          if (!lastHeard || lastHeard.trim() !== text) hear(root, [text]);
         }
       } catch {}
     }

@@ -8,7 +8,7 @@
 // tool_input. VS Code: run_in_terminal ({ command }), create_file, replace_string_in_file,
 // insert_edit_into_file, edit_notebook_file ({ filePath }), multi_replace_string_in_file
 // ({ replacements: [{ filePath }] }).
-const SHELL_TOOLS = new Set(["bash", "powershell", "shell", "local_shell", "exec_command", "run_in_terminal"]);
+const SHELL_TOOLS = new Set(["bash", "powershell", "shell", "local_shell", "exec_command", "run_in_terminal", "run_command"]);
 const EDIT_TOOLS = new Set([
   "edit", "write", "create", "multiedit", "notebookedit",
   "create_file", "replace_string_in_file", "multi_replace_string_in_file", "insert_edit_into_file", "edit_notebook_file", "write_file", "edit_file", "write_to_file", "replace_file_content", "multi_replace_file_content",
@@ -49,6 +49,11 @@ function inputStrings(v, key = "", depth = 0, out = []) {
   return out;
 }
 
+/**
+ * Extracts and normalizes tool input arguments from varied agent payloads.
+ * @param {object} input - Raw hook input from the host agent
+ * @returns {object} Normalized tool input dictionary
+ */
 export function toolInput(input) {
   const ti = input.tool_input ?? input.toolInput ?? input.toolArgs ?? input.toolCall?.args ?? input.input ?? {};
   if (typeof ti !== "string") return ti || {};
@@ -60,15 +65,23 @@ const patchPaths = (ti) => {
   return [...text.matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm)].map((m) => m[1].trim());
 };
 
-// What an edit takes out and puts in, for the hook settings check: old/new strings, a whole new
-// file, or the - and + lines of a patch.
+/**
+ * Extracts removed and added chunks or whole file content from an edit call.
+ * @param {object} ti - Tool input dictionary for an edit tool
+ * @returns {{ removed: string, added: string, whole: string | undefined }} Extracted text changes
+ */
 function editChange(ti) {
-  const edits = [ti, ...(Array.isArray(ti.edits) ? ti.edits : []), ...(Array.isArray(ti.replacements) ? ti.replacements : [])].filter((e) => e && typeof e === "object");
+  const chunks = [
+    ...(Array.isArray(ti.ReplacementChunks) ? ti.ReplacementChunks : []),
+    ...(Array.isArray(ti.replacement_chunks) ? ti.replacement_chunks : []),
+    ...(Array.isArray(ti.replacementChunks) ? ti.replacementChunks : []),
+  ];
+  const edits = [ti, ...(Array.isArray(ti.edits) ? ti.edits : []), ...(Array.isArray(ti.replacements) ? ti.replacements : []), ...chunks].filter((e) => e && typeof e === "object");
   const pick = (e, keys) => keys.map((k) => e[k]).filter((v) => typeof v === "string");
   const patch = Object.values(ti).filter((v) => typeof v === "string" && v.includes("*** ")).join("\n");
   const removed = [...edits.flatMap((e) => pick(e, ["old_string", "oldString", "old_str", "Target", "target", "TargetContent"])), ...patch.split("\n").filter((l) => l.startsWith("-"))].join("\n");
   const added = [...edits.flatMap((e) => pick(e, ["new_string", "newString", "new_str", "code", "Replacement", "replacement", "ReplacementContent"])), ...patch.split("\n").filter((l) => l.startsWith("+"))].join("\n");
-  const whole = pick(ti, ["content", "file_text", "CodeContent", "contents", "Content", "TargetContent"])[0];
+  const whole = pick(ti, ["content", "file_text", "CodeContent", "contents", "Content"])[0];
   return { removed, added, whole };
 }
 
@@ -85,7 +98,13 @@ const shellLine = (name, command, bashIsPosix) => ({ command, ps: /^(powershell|
 //   { kind: "edit", paths, change }       paths empty when the edit names no file the hook can find
 //   { kind: "other", readOnly, deletes, lines, code, prompts, values: [{ text, context }] }
 //                                         any other tool, read by its input
-// opts.bashIsPosix: false when the agent may report a PowerShell tool as Bash.
+/**
+ * Determines the intended action of a tool call (shell execution, file edit, or other tool).
+ * @param {object} input - Tool call payload from the agent hook
+ * @param {object} [opts] - Extraction options
+ * @param {boolean} [opts.bashIsPosix=true] - False when PowerShell tools might be reported as Bash
+ * @returns {object} Action classification with target paths, command lines, or change deltas
+ */
 export function toolAction(input, { bashIsPosix = true } = {}) {
   const name = String(input.tool_name || input.toolName || input.toolCall?.name || "").toLowerCase();
   const ti = toolInput(input);

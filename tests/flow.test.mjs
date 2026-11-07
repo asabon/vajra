@@ -933,6 +933,41 @@ test("Antigravity gets a structured deny and injectSteps context", () => {
   assert.equal(stopOut.decision, "continue");
   assert.match(stopOut.reason, /in progress/);
 });
+
+test("Antigravity captures human gate reply and protects hooks via Cwd and multi-replace", () => {
+  const p = project();
+  const hook = (event, input) => spawnSync(process.execPath, [path.join(p.skill, "scripts", "flow.mjs"), "hook", event, "--agent", "antigravity"], {
+    cwd: p.proj, encoding: "utf8", env: { ...process.env, CLAUDE_PROJECT_DIR: "", FLOW_ROOT: "" }, input: JSON.stringify({ cwd: p.proj, conversationId: "c1", workspacePaths: [p.proj], ...input }),
+  });
+
+  p.cli("install", "--harness", "antigravity");
+  const subDir = path.join(p.proj, "scratch");
+  fs.mkdirSync(subDir, { recursive: true });
+  const relCmd = hook("pre-tool-use", { toolCall: { name: "run_command", args: { CommandLine: "rm -f ../.agents/hooks.json", Cwd: subDir } } });
+  assert.equal(relCmd.status, 0);
+  assert.equal(JSON.parse(relCmd.stdout).decision, "deny");
+
+  const multiReplace = hook("pre-tool-use", {
+    toolCall: {
+      name: "multi_replace_file_content",
+      args: {
+        TargetFile: ".agents/hooks.json",
+        ReplacementChunks: [{ TargetContent: 'flow.mjs', ReplacementContent: 'disabled.mjs' }],
+      },
+    },
+  });
+  assert.equal(multiReplace.status, 0);
+  assert.equal(JSON.parse(multiReplace.stdout).decision, "deny");
+
+  const gateRes = toGate(p);
+  assert.equal(gateRes.status, 3, "interrupted for human gate");
+
+  const userPrompt = hook("user-prompt", { lastUserInput: "approved, please proceed" });
+  assert.equal(userPrompt.status, 0);
+
+  const ans = p.cli("answer", "approve", "--note", "user approved");
+  assert.equal(ans.status, 0, ans.text);
+});
 test("Copilot gets a structured deny and a top-level additionalContext", () => {
   // Copilot CLI 1.0.95 shows the model only "hook exited with code 2" and drops stderr, and reads
   // session-start context only from a top-level additionalContext.

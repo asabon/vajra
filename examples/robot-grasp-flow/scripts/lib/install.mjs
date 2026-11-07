@@ -43,6 +43,14 @@ const HARNESSES = {
     version: 1,
     note: "Copilot CLI runs repository hooks only in a folder you have trusted, and ignores UserPromptSubmit output, so run state is injected only at session start; chat approvals are still recorded.",
   },
+  antigravity: {
+    hooks: () => ".agents/hooks.json",
+    fromRoot: true,
+    nested: true,
+    events: { "session-start": "SessionStart", "user-prompt": "PreInvocation", "pre-tool-use": "PreToolUse", stop: "Stop" },
+    entry: (command, ev, matcher) => (ev === "pre-tool-use" ? { matcher: matcher || "*", hooks: [{ type: "command", command }] } : { type: "command", command }),
+    note: "Antigravity runs lifecycle hooks from .agents/hooks.json.",
+  },
 };
 
 function readJson(file) {
@@ -71,10 +79,11 @@ export function install(root, o) {
     const file = h.hooks(scope);
     const cfg = load(file);
     if (h.version) cfg.version ||= h.version;
-    const events = (cfg.hooks ||= {});
+    const events = h.nested ? (cfg[skillName] ||= {}) : (cfg.hooks ||= {});
     const changed = [];
-    for (const [ev, [native, matcher]] of [...Object.entries(EVENTS).map(([e, n]) => [e, [n]]), ...Object.entries(h.extra || {})]) {
-      const entry = { ...(matcher ? { matcher } : {}), ...h.entry(`node ${target} hook ${ev} --agent ${name}`) };
+    const eventMap = h.events || EVENTS;
+    for (const [ev, [native, matcher]] of [...Object.entries(eventMap).map(([e, n]) => [e, [n]]), ...Object.entries(h.extra || {})]) {
+      const entry = { ...(matcher ? { matcher } : {}), ...h.entry(`node ${target} hook ${ev} --agent ${name}`, ev, matcher) };
       const before = JSON.stringify(events[native] || []);
       const list = (events[native] || [])
         .map((x) => (x.hooks ? { ...x, hooks: x.hooks.filter((y) => !ours(y.command)) } : x))
