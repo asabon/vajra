@@ -6,8 +6,9 @@ language: "ja-JP"
 early_access: false
 
 reviews:
-  # レビュープロファイル: "chill" (主要な問題やバグにフォーカスし、過度な形式チェックを抑制)
-  profile: "chill"
+  # レビュープロファイル: "assertive"
+  # セキュリティリスク、エッジケース、潜在的なバグを徹底的に炙り出す厳格モード
+  profile: "assertive"
   request_changes_workflow: false
   high_level_summary: true
   poem: false
