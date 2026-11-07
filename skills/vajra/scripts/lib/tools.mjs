@@ -11,7 +11,7 @@
 const SHELL_TOOLS = new Set(["bash", "powershell", "shell", "local_shell", "exec_command", "run_in_terminal"]);
 const EDIT_TOOLS = new Set([
   "edit", "write", "create", "multiedit", "notebookedit",
-  "create_file", "replace_string_in_file", "multi_replace_string_in_file", "insert_edit_into_file", "edit_notebook_file",
+  "create_file", "replace_string_in_file", "multi_replace_string_in_file", "insert_edit_into_file", "edit_notebook_file", "write_file", "edit_file",
 ]);
 // Any other tool is read by its input: a tool whose name says it only reads is let through; for
 // the rest, values under these keys are read as shell lines or as code, and every value is checked
@@ -50,7 +50,7 @@ function inputStrings(v, key = "", depth = 0, out = []) {
 }
 
 export function toolInput(input) {
-  const ti = input.tool_input ?? input.toolInput ?? input.toolArgs ?? input.input ?? {};
+  const ti = input.tool_input ?? input.toolInput ?? input.toolArgs ?? input.toolCall?.args ?? input.input ?? {};
   if (typeof ti !== "string") return ti || {};
   try { return JSON.parse(ti) || {}; } catch { return { input: ti }; }
 }
@@ -66,9 +66,9 @@ function editChange(ti) {
   const edits = [ti, ...(Array.isArray(ti.edits) ? ti.edits : []), ...(Array.isArray(ti.replacements) ? ti.replacements : [])].filter((e) => e && typeof e === "object");
   const pick = (e, keys) => keys.map((k) => e[k]).filter((v) => typeof v === "string");
   const patch = Object.values(ti).filter((v) => typeof v === "string" && v.includes("*** ")).join("\n");
-  const removed = [...edits.flatMap((e) => pick(e, ["old_string", "oldString", "old_str"])), ...patch.split("\n").filter((l) => l.startsWith("-"))].join("\n");
-  const added = [...edits.flatMap((e) => pick(e, ["new_string", "newString", "new_str", "code"])), ...patch.split("\n").filter((l) => l.startsWith("+"))].join("\n");
-  const whole = pick(ti, ["content", "file_text", "CodeContent", "contents"])[0];
+  const removed = [...edits.flatMap((e) => pick(e, ["old_string", "oldString", "old_str", "Target", "target"])), ...patch.split("\n").filter((l) => l.startsWith("-"))].join("\n");
+  const added = [...edits.flatMap((e) => pick(e, ["new_string", "newString", "new_str", "code", "Replacement", "replacement"])), ...patch.split("\n").filter((l) => l.startsWith("+"))].join("\n");
+  const whole = pick(ti, ["content", "file_text", "CodeContent", "contents", "Content"])[0];
   return { removed, added, whole };
 }
 
@@ -87,7 +87,7 @@ const shellLine = (name, command, bashIsPosix) => ({ command, ps: /^(powershell|
 //                                         any other tool, read by its input
 // opts.bashIsPosix: false when the agent may report a PowerShell tool as Bash.
 export function toolAction(input, { bashIsPosix = true } = {}) {
-  const name = String(input.tool_name || input.toolName || "").toLowerCase();
+  const name = String(input.tool_name || input.toolName || input.toolCall?.name || "").toLowerCase();
   const ti = toolInput(input);
   if (SHELL_TOOLS.has(name) || (!name && (ti.command || input.command))) {
     const c = ti.command ?? ti.cmd ?? ti.CommandLine ?? ti.command_line ?? input.command ?? "";
@@ -98,7 +98,7 @@ export function toolAction(input, { bashIsPosix = true } = {}) {
   }
   if (name === "apply_patch" || name === "applypatch") return { kind: "edit", paths: patchPaths(ti), change: editChange(ti) };
   if (EDIT_TOOLS.has(name)) {
-    const one = (e) => e?.file_path || e?.filePath || e?.path || e?.notebook_path || e?.target_file || e?.absolute_path;
+    const one = (e) => e?.file_path || e?.filePath || e?.path || e?.notebook_path || e?.target_file || e?.absolute_path || e?.Path;
     const paths = [one(ti), ...patchPaths(ti)];
     for (const list of [ti.replacements, ti.edits]) if (Array.isArray(list)) paths.push(...list.map(one));
     return { kind: "edit", paths: paths.filter(Boolean).map(String), change: editChange(ti) };
