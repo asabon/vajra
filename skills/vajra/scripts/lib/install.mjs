@@ -48,12 +48,7 @@ const HARNESSES = {
     fromRoot: true,
     nested: true,
     events: { "session-start": "SessionStart", "user-prompt": "PreInvocation", "pre-tool-use": "PreToolUse", stop: "Stop" },
-    extra: { "post-tool-use": ["PostToolUse", "ask_question"] },
-    entry: (command, ev, matcher) => {
-      if (ev === "pre-tool-use") return { matcher: matcher || "*", hooks: [{ type: "command", command }] };
-      if (ev === "post-tool-use") return { matcher: matcher || "ask_question", hooks: [{ type: "command", command }] };
-      return { type: "command", command };
-    },
+    entry: (command, ev, matcher) => (ev === "pre-tool-use" ? { matcher: matcher || "*", hooks: [{ type: "command", command }] } : { type: "command", command }),
     note: "Antigravity runs lifecycle hooks from .agents/hooks.json.",
   },
 };

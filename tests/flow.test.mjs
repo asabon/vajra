@@ -738,9 +738,8 @@ test("install writes hooks for each agent, and MCP only on request, idempotently
   assert.equal(toml.match(/\[mcp_servers\."demo-flow"\]/g).length, 1);
   p.cli("install", "--harness", "antigravity");
   const ag = json(".agents/hooks.json")["demo-flow"];
-  for (const ev of ["SessionStart", "PreInvocation", "PreToolUse", "PostToolUse", "Stop"]) assert.equal(ag[ev].length, 1, ev);
+  for (const ev of ["SessionStart", "PreInvocation", "PreToolUse", "Stop"]) assert.equal(ag[ev].length, 1, ev);
   assert.equal(ag.PreToolUse[0].matcher, "*");
-  assert.equal(ag.PostToolUse[0].matcher, "ask_question");
   assert.equal(p.cli("install", "--harness", "vim").status, 2);
   assert.equal(p.cli("install", "--harness", "cursor").status, 2, "only supported harnesses are accepted");
 });
@@ -903,6 +902,9 @@ test("tool names and payloads of different agents are normalized", () => {
   assert.equal(pre("edit_file", { Path: "src/app.js", Target: "a", Replacement: "b" }), 2);
   assert.equal(pre("write_file", { Path: "scratch/a.js", Content: "x" }), 0);
   assert.equal(pre("read_file", { Path: "src/app.js" }), 0);
+  assert.equal(pre("write_to_file", { TargetFile: "src/app.js", TargetContent: "x" }), 2);
+  assert.equal(pre("replace_file_content", { TargetFile: "src/app.js", TargetContent: "a", ReplacementContent: "b" }), 2);
+  assert.equal(pre("write_to_file", { TargetFile: "scratch/a.js", TargetContent: "x" }), 0);
 });
 
 test("Antigravity gets a structured deny and injectSteps context", () => {
@@ -923,7 +925,13 @@ test("Antigravity gets a structured deny and injectSteps context", () => {
 
   const allowed = hook("pre-tool-use", { toolCall: { name: "write_file", args: { Path: "scratch/test.txt", Content: "hello" } } });
   assert.equal(allowed.status, 0);
-  assert.equal(allowed.stdout.trim(), "");
+  assert.deepEqual(JSON.parse(allowed.stdout), { decision: "allow" });
+
+  const stopped = hook("stop", {});
+  assert.equal(stopped.status, 0);
+  const stopOut = JSON.parse(stopped.stdout);
+  assert.equal(stopOut.decision, "continue");
+  assert.match(stopOut.reason, /in progress/);
 });
 test("Copilot gets a structured deny and a top-level additionalContext", () => {
   // Copilot CLI 1.0.95 shows the model only "hook exited with code 2" and drops stderr, and reads

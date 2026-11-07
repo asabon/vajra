@@ -204,7 +204,7 @@ function blockTool(reason, format) {
 function answer(v, format) {
   if (!v) return 0;
   if (v.deny) return blockTool(v.deny, format);
-  if (v.block) console.log(JSON.stringify(format === "antigravity" ? { decision: "deny", reason: `${tag} ${v.block}` } : { decision: "block", reason: `${tag} ${v.block}` }));
+  if (v.block) console.log(JSON.stringify(format === "antigravity" ? { decision: "continue", reason: `${tag} ${v.block}` } : { decision: "block", reason: `${tag} ${v.block}` }));
   else if (v.context !== undefined) console.log(context(v.event, v.context, format));
   else if (v.unknown !== undefined) console.error(`unknown hook event "${v.unknown}"`);
   return 0;
@@ -295,13 +295,24 @@ export function main(argv) {
     }
     // The user's own message is kept before anything else, so it is there with lib/ broken.
     if (rest[0] === "user-prompt") {
-      try { hear(root, [String(input.prompt ?? input.user_prompt ?? input.message ?? input.lastUserInput ?? "")]); } catch {}
+      try {
+        const text = String(input.prompt ?? input.user_prompt ?? input.message ?? input.lastUserInput ?? "");
+        if (text.trim()) {
+          const st = loadState(root);
+          const lastHeard = (st.heard || []).at(-1)?.text;
+          if (norm(lastHeard) !== norm(text)) hear(root, [text]);
+        }
+      } catch {}
     }
     try {
       if (loadError) throw new Error(`the runtime did not load: ${loadError}`);
       // Only Claude Code itself runs Bash in a POSIX shell on Windows; see lib/tools.mjs.
       const v = lib.runHook(rest[0], input, root, { bashIsPosix: agent === "claude" && format !== "copilot" });
       if (v?.heard) { hear(root, v.heard); return 0; }
+      if (!v && rest[0] === "pre-tool-use" && format === "antigravity") {
+        console.log(JSON.stringify({ decision: "allow" }));
+        return 0;
+      }
       return answer(v, format);
     } catch (e) {
       return degradedHook(rest[0], e, input, raw, root, format);

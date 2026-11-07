@@ -11,7 +11,7 @@
 const SHELL_TOOLS = new Set(["bash", "powershell", "shell", "local_shell", "exec_command", "run_in_terminal"]);
 const EDIT_TOOLS = new Set([
   "edit", "write", "create", "multiedit", "notebookedit",
-  "create_file", "replace_string_in_file", "multi_replace_string_in_file", "insert_edit_into_file", "edit_notebook_file", "write_file", "edit_file",
+  "create_file", "replace_string_in_file", "multi_replace_string_in_file", "insert_edit_into_file", "edit_notebook_file", "write_file", "edit_file", "write_to_file", "replace_file_content", "multi_replace_file_content",
 ]);
 // Any other tool is read by its input: a tool whose name says it only reads is let through; for
 // the rest, values under these keys are read as shell lines or as code, and every value is checked
@@ -66,9 +66,9 @@ function editChange(ti) {
   const edits = [ti, ...(Array.isArray(ti.edits) ? ti.edits : []), ...(Array.isArray(ti.replacements) ? ti.replacements : [])].filter((e) => e && typeof e === "object");
   const pick = (e, keys) => keys.map((k) => e[k]).filter((v) => typeof v === "string");
   const patch = Object.values(ti).filter((v) => typeof v === "string" && v.includes("*** ")).join("\n");
-  const removed = [...edits.flatMap((e) => pick(e, ["old_string", "oldString", "old_str", "Target", "target"])), ...patch.split("\n").filter((l) => l.startsWith("-"))].join("\n");
-  const added = [...edits.flatMap((e) => pick(e, ["new_string", "newString", "new_str", "code", "Replacement", "replacement"])), ...patch.split("\n").filter((l) => l.startsWith("+"))].join("\n");
-  const whole = pick(ti, ["content", "file_text", "CodeContent", "contents", "Content"])[0];
+  const removed = [...edits.flatMap((e) => pick(e, ["old_string", "oldString", "old_str", "Target", "target", "TargetContent"])), ...patch.split("\n").filter((l) => l.startsWith("-"))].join("\n");
+  const added = [...edits.flatMap((e) => pick(e, ["new_string", "newString", "new_str", "code", "Replacement", "replacement", "ReplacementContent"])), ...patch.split("\n").filter((l) => l.startsWith("+"))].join("\n");
+  const whole = pick(ti, ["content", "file_text", "CodeContent", "contents", "Content", "TargetContent"])[0];
   return { removed, added, whole };
 }
 
@@ -94,20 +94,20 @@ export function toolAction(input, { bashIsPosix = true } = {}) {
     let command = Array.isArray(c) ? quoteArgv(c) : String(c);
     // A shell call whose command sits under a field the hook does not know: read every value.
     if (!command.trim()) command = inputStrings(ti).map((x) => x.text).join("\n");
-    return { kind: "shell", lines: [shellLine(name, command, bashIsPosix)] };
+    return { kind: "shell", lines: [shellLine(name, command, bashIsPosix)], cwd: ti.Cwd || ti.cwd };
   }
   if (name === "apply_patch" || name === "applypatch") return { kind: "edit", paths: patchPaths(ti), change: editChange(ti) };
   if (EDIT_TOOLS.has(name)) {
-    const one = (e) => e?.file_path || e?.filePath || e?.path || e?.notebook_path || e?.target_file || e?.absolute_path || e?.Path;
+    const one = (e) => e?.file_path || e?.filePath || e?.path || e?.notebook_path || e?.target_file || e?.absolute_path || e?.Path || e?.TargetFile || e?.targetFile;
     const paths = [one(ti), ...patchPaths(ti)];
     for (const list of [ti.replacements, ti.edits]) if (Array.isArray(list)) paths.push(...list.map(one));
-    return { kind: "edit", paths: paths.filter(Boolean).map(String), change: editChange(ti) };
+    return { kind: "edit", paths: paths.filter(Boolean).map(String), change: editChange(ti), cwd: ti.Cwd || ti.cwd };
   }
   const values = inputStrings(ti);
   return {
     kind: "other",
-    readOnly: ((w) => READ_ONLY_TOOL.test(w[0] || "") && !w.some((x) => ACTING_WORD.test(x)))(nameWords(input.tool_name || input.toolName || "")),
-    deletes: nameWords(input.tool_name || input.toolName || "").some((x) => DELETING_WORD.test(x)),
+    readOnly: ((w) => READ_ONLY_TOOL.test(w[0] || "") && !w.some((x) => ACTING_WORD.test(x)))(nameWords(name)),
+    deletes: nameWords(name).some((x) => DELETING_WORD.test(x)),
     lines: values.filter((x) => COMMAND_KEY.test(x.key)).map((x) => shellLine(name, x.text, bashIsPosix)),
     code: values.filter((x) => CODE_KEY.test(x.key)).map((x) => x.text),
     prompts: SUBAGENT.test(name) ? [] : values.filter((x) => PROMPT_KEY.test(x.key) || (MESSAGE_KEY.test(x.key) && SENDS.test(name))).map((x) => x.text),
