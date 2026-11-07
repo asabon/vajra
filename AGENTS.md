@@ -92,17 +92,21 @@ vajra の主要コードは `skills/vajra/` 配下に配置されています。
 
 ## 🚀 グローバルスキルのデプロイ運用 (Antigravity)
 
-日常利用する Antigravity に安定版の vajra メタスキルを提供する際は、以下のスクリプトを実行します。
-作業ツリーの未コミット変更や作業ブランチの状態に影響されず、クリーンな git コミットから安全にデプロイされます。
+日常利用する Antigravity に vajra メタスキルを提供する際は、以下のスクリプトを実行します。
+手元の作業ブランチ、未コミットの修正、あるいは安定版コミットなど、開発・動作確認の用途に合わせてデプロイできます。
 
 ```bash
-# develop ブランチの最新コミットをデプロイ
+# 1. 現在のブランチの最新コミットをデプロイ（デフォルト）
 node .agents/scripts/deploy-global-skill.mjs
 
-# 特定ブランチやコミットを指定してデプロイ
+# 2. 作業中の未コミット変更（WIP）も含めて手元から即時デプロイして動作確認
+node .agents/scripts/deploy-global-skill.mjs --worktree
+
+# 3. 指定ブランチ（例: develop や feature ブランチ）の最新コミットをデプロイ
+node .agents/scripts/deploy-global-skill.mjs --ref develop
 node .agents/scripts/deploy-global-skill.mjs --ref feature/support-antigravity-harness
 
-# デプロイ内容の事前確認 (dry-run)
+# 4. デプロイ内容の事前確認 (dry-run)
 node .agents/scripts/deploy-global-skill.mjs --dry-run
 ```
 
