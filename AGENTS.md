@@ -62,7 +62,7 @@ vajra の主要コードは `skills/vajra/` 配下に配置されています。
   - 日常の開発や検証はここをベースに進めます。
 - **`feature/<topic-name>` / `fix/<topic-name>`（本家還元コード開発ブランチ）**:
   - `develop` から分岐して本家還元用のコード（`skills/`, `tests/` 等）を修正するブランチ。
-  - 🚫 **ハーネス（`AGENTS.md`, `.agents/`, `.githooks/`）の変更は禁止**。
+  - 🚫 **ハーネス（`AGENTS.md`, `.agents/`, `.githooks/`, `.coderabbit.yaml`）の変更は禁止**。
 - **`chore/<topic-name>`（環境整備・AI ハーネスブランチ）**:
   - CI ワークフロー、スクリプト、`AGENTS.md` などのローカル環境を改善するブランチ。
   - 🚫 **プロダクションコード（`skills/`, `tests/` 等）の変更は禁止**。
@@ -78,7 +78,7 @@ vajra の主要コードは `skills/vajra/` 配下に配置されています。
 本家への PR に手作業での除外漏れやローカル環境の混入事故を防ぐため、以下の自動検査を実施しています：
 
 - **`.agents/scripts/check-branch-isolation.mjs`**:
-  - `feature/*` や `pr/*` ブランチでハーネスファイル（`AGENTS.md`, `.agents/`, `.githooks/` 等）が変更されていないか検査。
+  - `feature/*` や `pr/*` ブランチでハーネスファイル（`AGENTS.md`, `.agents/`, `.githooks/`, `.coderabbit.yaml` 等）が変更されていないか検査。
 - **`.agents/scripts/check-no-japanese.mjs`**:
   - コアスクリプト（`skills/vajra/scripts/`）に日本語文字が混入していないか検査。
 - **`.agents/scripts/deploy-global-skill.mjs`**:

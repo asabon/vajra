@@ -100,6 +100,7 @@ const HARNESS_PATTERNS = [
   /^AGENTS\.md$/,
   /^\.agents\//,
   /^\.githooks\//,
+  /^\.coderabbit\.ya?ml$/,
   /^docs\//,
 ];
 
