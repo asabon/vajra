@@ -972,6 +972,17 @@ test("Antigravity captures human gate reply and protects hooks via Cwd and multi
 
   const ans = p.cli("answer", "approve", "--note", "user approved");
   assert.equal(ans.status, 0, ans.text);
+
+  // Successive question accepts the identical reply text without requiring rewording
+  const req = p.cli("request", "suspend", "--reason", "need test");
+  assert.equal(req.status, 3);
+  const nextPrompt = hook("user-prompt", { lastUserInput: "approved, please proceed" });
+  assert.equal(nextPrompt.status, 0);
+  const nextHeard = stateOf(p).heard;
+  assert.equal(nextHeard.length, heard.length + 1);
+  assert.equal(nextHeard.at(-1).text, "approved, please proceed");
+  const suspendAns = p.cli("answer", "suspend");
+  assert.equal(suspendAns.status, 0, suspendAns.text);
 });
 test("Copilot gets a structured deny and a top-level additionalContext", () => {
   // Copilot CLI 1.0.95 shows the model only "hook exited with code 2" and drops stderr, and reads

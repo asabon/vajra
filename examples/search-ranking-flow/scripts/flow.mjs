@@ -299,8 +299,10 @@ export function main(argv) {
         const text = String(input.prompt ?? input.user_prompt ?? input.message ?? input.lastUserInput ?? "").trim();
         if (text) {
           const st = loadState(root);
-          const lastHeard = (st.heard || []).at(-1)?.text;
-          if (!lastHeard || lastHeard.trim() !== text) hear(root, [text]);
+          const waitingSince = st.run?.awaiting?.since || st.request?.since;
+          const lastHeard = (st.heard || []).at(-1);
+          const isDuplicate = waitingSince && lastHeard && lastHeard.at >= waitingSince && lastHeard.text?.trim() === text;
+          if (!isDuplicate) hear(root, [text]);
         }
       } catch {}
     }
