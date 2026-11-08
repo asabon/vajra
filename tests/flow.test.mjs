@@ -736,8 +736,12 @@ test("install writes hooks for each agent, and MCP only on request, idempotently
   assert.deepEqual(json(".mcp.json").mcpServers["demo-flow"], { command: "node", args: [".claude/skills/demo-flow/scripts/flow.mjs", "mcp"] });
   const toml = fs.readFileSync(path.join(p.proj, ".codex", "config.toml"), "utf8");
   assert.equal(toml.match(/\[mcp_servers\."demo-flow"\]/g).length, 1);
+  p.cli("install", "--harness", "antigravity");
+  const ag = json(".agents/hooks.json")["demo-flow"];
+  for (const ev of ["SessionStart", "PreInvocation", "PreToolUse", "Stop"]) assert.equal(ag[ev].length, 1, ev);
+  assert.equal(ag.PreToolUse[0].matcher, "*");
   assert.equal(p.cli("install", "--harness", "vim").status, 2);
-  assert.equal(p.cli("install", "--harness", "cursor").status, 2, "only Claude Code, Codex and Copilot are supported");
+  assert.equal(p.cli("install", "--harness", "cursor").status, 2, "only supported harnesses are accepted");
 });
 
 // Runs a hook command from an installed settings file the way an agent does: through a shell, from
@@ -892,8 +896,94 @@ test("tool names and payloads of different agents are normalized", () => {
   assert.equal(pre("edit_notebook_file", { filePath: "src/a.ipynb", cellId: "1", editType: "edit" }), 2);
   assert.equal(pre("multi_replace_string_in_file", { replacements: [{ filePath: "scratch/a.js" }, { filePath: "src/app.js" }] }), 2);
   assert.equal(pre("create_file", { filePath: "scratch/a.js", content: "x" }), 0);
+  // Antigravity (Google).
+  assert.equal(pre("run_command", { CommandLine: "npm run deploy" }), 2);
+  assert.equal(pre("write_file", { Path: "src/app.js", Content: "x" }), 2);
+  assert.equal(pre("edit_file", { Path: "src/app.js", Target: "a", Replacement: "b" }), 2);
+  assert.equal(pre("write_file", { Path: "scratch/a.js", Content: "x" }), 0);
+  assert.equal(pre("read_file", { Path: "src/app.js" }), 0);
+  assert.equal(pre("write_to_file", { TargetFile: "src/app.js", TargetContent: "x" }), 2);
+  assert.equal(pre("replace_file_content", { TargetFile: "src/app.js", TargetContent: "a", ReplacementContent: "b" }), 2);
+  assert.equal(pre("write_to_file", { TargetFile: "scratch/a.js", TargetContent: "x" }), 0);
 });
 
+test("Antigravity gets a structured deny and injectSteps context", () => {
+  const p = project();
+  const hook = (event, input) => spawnSync(process.execPath, [path.join(p.skill, "scripts", "flow.mjs"), "hook", event, "--agent", "antigravity"], {
+    cwd: p.proj, encoding: "utf8", env: { ...process.env, CLAUDE_PROJECT_DIR: "", FLOW_ROOT: "" }, input: JSON.stringify({ cwd: p.proj, conversationId: "c1", workspacePaths: [p.proj], ...input }),
+  });
+  const start = JSON.parse(hook("session-start", {}).stdout);
+  assert.ok(Array.isArray(start.injectSteps));
+  assert.match(start.injectSteps[0].systemMessage.systemMessage, /No playbook is active/);
+
+  p.cli("start", "spike", "--request", "try it");
+  const denied = hook("pre-tool-use", { toolCall: { name: "run_command", args: { CommandLine: "npm run deploy" } } });
+  assert.equal(denied.status, 0);
+  const out = JSON.parse(denied.stdout);
+  assert.equal(out.decision, "deny");
+  assert.match(out.reason, /Blocked:/);
+
+  const allowed = hook("pre-tool-use", { toolCall: { name: "write_file", args: { Path: "scratch/test.txt", Content: "hello" } } });
+  assert.equal(allowed.status, 0);
+  assert.deepEqual(JSON.parse(allowed.stdout), { decision: "allow" });
+
+  const stopped = hook("stop", {});
+  assert.equal(stopped.status, 0);
+  const stopOut = JSON.parse(stopped.stdout);
+  assert.equal(stopOut.decision, "continue");
+  assert.match(stopOut.reason, /in progress/);
+});
+
+test("Antigravity captures human gate reply and protects hooks via Cwd and multi-replace", () => {
+  const p = project();
+  const hook = (event, input) => spawnSync(process.execPath, [path.join(p.skill, "scripts", "flow.mjs"), "hook", event, "--agent", "antigravity"], {
+    cwd: p.proj, encoding: "utf8", env: { ...process.env, CLAUDE_PROJECT_DIR: "", FLOW_ROOT: "" }, input: JSON.stringify({ cwd: p.proj, conversationId: "c1", workspacePaths: [p.proj], ...input }),
+  });
+
+  p.cli("install", "--harness", "antigravity");
+  const subDir = path.join(p.proj, "scratch");
+  fs.mkdirSync(subDir, { recursive: true });
+  const relCmd = hook("pre-tool-use", { toolCall: { name: "run_command", args: { CommandLine: "rm -f ../.agents/hooks.json", Cwd: subDir } } });
+  assert.equal(relCmd.status, 0);
+  assert.equal(JSON.parse(relCmd.stdout).decision, "deny");
+
+  const multiReplace = hook("pre-tool-use", {
+    toolCall: {
+      name: "multi_replace_file_content",
+      args: {
+        TargetFile: ".agents/hooks.json",
+        ReplacementChunks: [{ TargetContent: 'flow.mjs', ReplacementContent: 'disabled.mjs' }],
+      },
+    },
+  });
+  assert.equal(multiReplace.status, 0);
+  assert.equal(JSON.parse(multiReplace.stdout).decision, "deny");
+
+  const gateRes = toGate(p);
+  assert.equal(gateRes.status, 3, "interrupted for human gate");
+
+  const userPrompt = hook("user-prompt", { lastUserInput: "approved, please proceed" });
+  assert.equal(userPrompt.status, 0);
+  const heard = stateOf(p).heard;
+  assert.ok(heard.some((entry) => entry.text === "approved, please proceed"));
+  const repeatPrompt = hook("user-prompt", { lastUserInput: "approved, please proceed" });
+  assert.equal(repeatPrompt.status, 0);
+  assert.deepEqual(stateOf(p).heard, heard);
+
+  const ans = p.cli("answer", "approve", "--note", "user approved");
+  assert.equal(ans.status, 0, ans.text);
+
+  // Successive question accepts the identical reply text without requiring rewording
+  const req = p.cli("request", "suspend", "--reason", "need test");
+  assert.equal(req.status, 3);
+  const nextPrompt = hook("user-prompt", { lastUserInput: "approved, please proceed" });
+  assert.equal(nextPrompt.status, 0);
+  const nextHeard = stateOf(p).heard;
+  assert.equal(nextHeard.length, heard.length + 1);
+  assert.equal(nextHeard.at(-1).text, "approved, please proceed");
+  const suspendAns = p.cli("answer", "suspend");
+  assert.equal(suspendAns.status, 0, suspendAns.text);
+});
 test("Copilot gets a structured deny and a top-level additionalContext", () => {
   // Copilot CLI 1.0.95 shows the model only "hook exited with code 2" and drops stderr, and reads
   // session-start context only from a top-level additionalContext.

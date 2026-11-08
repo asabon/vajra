@@ -13,7 +13,7 @@ const norm = (t) => t.replace(/\\/g, "/").toLowerCase();
 // Files whose settings run or switch off the hooks: Claude Code's (which Copilot reads too), Codex's
 // and Copilot's own settings (they can hold hooks and disableAllHooks). VS Code's settings can turn
 // hooks off too (chat.useHooks) but are read often, so code that merely names them is not refused.
-export const HOOK_CONFIGS = [".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".codex/config.toml", ".github/copilot/settings.json", ".github/copilot/settings.local.json"];
+export const HOOK_CONFIGS = [".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".codex/config.toml", ".github/copilot/settings.json", ".github/copilot/settings.local.json", ".agents/hooks.json"];
 export function railsPaths(root, skillDir) {
   const configs = [...HOOK_CONFIGS, ".vscode/settings.json", `.github/hooks/${path.basename(skillDir)}.json`].map((f) => path.join(root, f));
   configs.push(...[".claude/settings.json", ".codex/config.toml", ".copilot/settings.json"].map((f) => path.join(os.homedir(), f)));
@@ -24,7 +24,7 @@ export function railsPaths(root, skillDir) {
 export const samePath = (a, b) => norm(a) === norm(b);
 export const inside = (p, dir) => samePath(p, dir) || norm(p).startsWith(norm(dir).replace(/\/$/, "") + "/");
 // Hook settings may change except where an edit drops a flow.mjs hook or turns hooks off.
-export const DISABLES_HOOKS = /disableAllHooks|codex_hooks\s*=\s*false|chat\.useHooks["']?\s*[:=]\s*false/i;
+export const DISABLES_HOOKS = /disableAllHooks|codex_hooks\s*=\s*false|chat\.useHooks["']?\s*[:=]\s*false|"enabled"\s*:\s*false/i;
 // Codex: hooks = false under [features] (or features.hooks = false).
 const TOML_OFF = /\bhooks\s*=\s*false\b/;
 

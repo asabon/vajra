@@ -69,7 +69,7 @@ function preToolUse(g, state, input, root, opts) {
   const rails = railsLevel(g);
   if (state.suspended || (g.ok && rails === "advisory")) return null;
   const act = toolAction(input, opts);
-  const cwd = input.cwd || root;
+  const cwd = act.cwd || input.cwd || root;
   const own = railsCheck(act, g, root, cwd, !!(state.request || state.run?.awaiting));
   if (own || !g.ok) return own;
   const run = state.run;
