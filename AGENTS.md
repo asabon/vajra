@@ -81,9 +81,40 @@ vajra の主要コードは `skills/vajra/` 配下に配置されています。
   - `feature/*` や `pr/*` ブランチでハーネスファイル（`AGENTS.md`, `.agents/`, `.githooks/` 等）が変更されていないか検査。
 - **`.agents/scripts/check-no-japanese.mjs`**:
   - コアスクリプト（`skills/vajra/scripts/`）に日本語文字が混入していないか検査。
+- **`.agents/scripts/deploy-global-skill.mjs`**:
+  - Antigravity のグローバルスキル配置パス（`~/.gemini/config/skills/vajra/`）へ、現在のブランチ（または指定した ref）の最新コミットからクリーンにスキルを抽出・デプロイ。
+  - 開発作業ツリー（WIP）を直接 `skills.json` で参照することを防ぎ、常に安定版スキルを Antigravity で利用可能にする。
 - **`.githooks/` (Git フック)**:
   - `pre-commit`: `main` への直接コミットをブロック。
   - `pre-push`: `main` への直接 push をブロック、および `pr/*` ブランチへのハーネス・日本語混入を検査・遮断。
+
+---
+
+## 🚀 グローバルスキルのデプロイ運用 (Antigravity)
+
+日常利用する Antigravity に vajra メタスキルを提供する際は、以下のスクリプトを実行します。
+手元の作業ブランチ、未コミットの修正、あるいは安定版コミットなど、開発・動作確認の用途に合わせてデプロイできます。
+
+```bash
+# 1. 現在 Antigravity にデプロイされているバージョンの確認
+node .agents/scripts/deploy-global-skill.mjs --status
+
+# 2. 現在のブランチの最新コミットをデプロイ（デフォルト）
+node .agents/scripts/deploy-global-skill.mjs
+
+# 3. 作業中の未コミット変更（WIP）も含めて手元から即時デプロイして動作確認
+node .agents/scripts/deploy-global-skill.mjs --worktree
+
+# 4. 指定ブランチ（例: develop や feature ブランチ）の最新コミットをデプロイ
+node .agents/scripts/deploy-global-skill.mjs --ref develop
+node .agents/scripts/deploy-global-skill.mjs --ref feature/support-antigravity-harness
+
+# 5. デプロイ内容の事前確認 (dry-run)
+node .agents/scripts/deploy-global-skill.mjs --dry-run
+```
+
+- **配置先**: `~/.gemini/config/skills/vajra`
+- **注意**: `~/.gemini/config/skills.json` でリポジトリの開発作業ツリー（リポジトリの `skills/` ディレクトリ）を直接参照しないこと。
 
 ---
 
