@@ -82,7 +82,7 @@ vajra の主要コードは `skills/vajra/` 配下に配置されています。
 - **`.agents/scripts/check-no-japanese.mjs`**:
   - コアスクリプト（`skills/vajra/scripts/`）に日本語文字が混入していないか検査。
 - **`.agents/scripts/deploy-global-skill.mjs`**:
-  - Antigravity のグローバルスキル配置パス（`~/.gemini/config/skills/vajra/`）へ、指定ブランチ（デフォルト: `develop`）の最新コミットからクリーンにスキルを抽出・デプロイ。
+  - Antigravity のグローバルスキル配置パス（`~/.gemini/config/skills/vajra/`）へ、現在のブランチ（または指定した ref）の最新コミットからクリーンにスキルを抽出・デプロイ。
   - 開発作業ツリー（WIP）を直接 `skills.json` で参照することを防ぎ、常に安定版スキルを Antigravity で利用可能にする。
 - **`.githooks/` (Git フック)**:
   - `pre-commit`: `main` への直接コミットをブロック。
@@ -114,7 +114,7 @@ node .agents/scripts/deploy-global-skill.mjs --dry-run
 ```
 
 - **配置先**: `~/.gemini/config/skills/vajra`
-- **注意**: `~/.gemini/config/skills.json` でリポジトリの開発作業ツリー（`E:/work/vajra/skills`）を直接参照しないこと。
+- **注意**: `~/.gemini/config/skills.json` でリポジトリの開発作業ツリー（リポジトリの `skills/` ディレクトリ）を直接参照しないこと。
 
 ---
 
