@@ -25,6 +25,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '../..');
 
+/**
+ * Prints the CLI usage message and terminates the process.
+ *
+ * @param {number} [exitCode=0] - The exit code to terminate with.
+ * @returns {never}
+ */
 function printUsageAndExit(exitCode = 0) {
   const msg = `Usage:
   node .agents/scripts/deploy-global-skill.mjs [options]
@@ -95,6 +101,13 @@ for (let i = 0; i < args.length; i++) {
 }
 
 // Git runner helper (avoids shell interpolation)
+/**
+ * Executes a Git command synchronously in the repository root without invoking a shell.
+ *
+ * @param {string[]} gitArgs - Arguments to pass to the git command.
+ * @param {import('node:child_process').ExecFileSyncOptions} [options={}] - Additional execution options.
+ * @returns {string} Trimmed standard output from the git command.
+ */
 function runGit(gitArgs, options = {}) {
   return execFileSync('git', gitArgs, {
     cwd: REPO_ROOT,
@@ -105,6 +118,12 @@ function runGit(gitArgs, options = {}) {
 }
 
 // Destination path validation
+/**
+ * Validates the deployment destination directory against unsafe paths and accidental overwrites.
+ *
+ * @param {string} targetPath - The path to validate as deployment destination.
+ * @returns {string} The resolved absolute destination path.
+ */
 function validateDestDir(targetPath) {
   const resolved = path.resolve(targetPath);
   const root = path.parse(resolved).root;
@@ -187,6 +206,13 @@ if (showStatus) {
 
 // --- Deploy Execution Helpers ---
 
+/**
+ * Recursively collects all file paths within a directory.
+ *
+ * @param {string} dir - Directory path to scan.
+ * @param {string[]} [files=[]] - Accumulator array for collected paths.
+ * @returns {string[]} Array of file paths found.
+ */
 function getFiles(dir, files = []) {
   if (!fs.existsSync(dir)) return files;
   for (const entry of fs.readdirSync(dir)) {
@@ -197,6 +223,14 @@ function getFiles(dir, files = []) {
   return files;
 }
 
+/**
+ * Atomically deploys files from a source directory to the destination directory with rollback on failure.
+ *
+ * @param {string} sourceDir - The source directory containing the skill files.
+ * @param {string} destination - The target deployment directory.
+ * @param {Record<string, unknown>} deployMetadata - Deployment metadata to store in .deploy-info.json.
+ * @returns {void}
+ */
 function deployFromDirectory(sourceDir, destination, deployMetadata) {
   const files = getFiles(sourceDir);
   console.log(`   Files found:  ${files.length} files`);
