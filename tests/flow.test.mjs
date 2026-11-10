@@ -856,6 +856,7 @@ test("the agent cannot switch the hooks off in Copilot's, VS Code's, Codex's or 
   assert.equal(pre("Write", { file_path: at(".codex/config.toml"), content: "features.hooks=false\n" }), 2);
   assert.equal(pre("write_to_file", { TargetFile: at(".agents/hooks.json"), CodeContent: '{ "demo-flow": { "enabled": false } }' }), 2);
   assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"matcher": "*"', ReplacementContent: '"matcher": "*", "command": "echo evil"' }), 2);
+  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"matcher": "*"', ReplacementContent: '"matcher": "run_command"' }), 2);
   assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: "flow.mjs hook pre-tool-use", ReplacementContent: "echo noop" }), 2);
   assert.equal(p.bash("echo '{\"chat.useHooks\": false}' > .vscode/settings.json").status, 2);
   assert.equal(p.bash("rm .github/hooks/demo-flow.json").status, 2);
@@ -864,10 +865,12 @@ test("the agent cannot switch the hooks off in Copilot's, VS Code's, Codex's or 
   fs.mkdirSync(at(".vscode"));
   fs.writeFileSync(at(".vscode/settings.json"), '{\n  "editor.tabSize": 2\n}\n');
   p.cli("install", "--harness", "antigravity");
+  const agJson = fs.readFileSync(at(".agents/hooks.json"), "utf8");
+  assert.equal(pre("write_to_file", { TargetFile: at(".agents/hooks.json"), CodeContent: agJson.replace('"matcher": "*"', '"matcher": "run_command"') }), 2);
   assert.equal(pre("Edit", { file_path: at(".vscode/settings.json"), old_string: '"editor.tabSize": 2', new_string: '"editor.tabSize": 4' }), 0);
   assert.equal(pre("Write", { file_path: at(".vscode/settings.json"), content: '{ "chat.useHooks": true, "files.eol": "\\n" }' }), 0);
   assert.equal(pre("Write", { file_path: at(".codex/config.toml"), content: 'model = "o4"\n' }), 0);
-  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"matcher": "*"', ReplacementContent: '"matcher": "run_command"' }), 0);
+  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"SessionStart": [', ReplacementContent: '"enabled": true,\n    "SessionStart": [' }), 0);
   assert.equal(p.bash("cat .vscode/settings.json").status, 0);
   assert.equal(p.bash("python3 -c \"import json; print(json.load(open('.vscode/settings.json')))\"").status, 0);
 });
@@ -964,7 +967,7 @@ test("Antigravity gets a structured deny and injectSteps context", () => {
     assert.equal(JSON.parse(degradedDeny.stdout).decision, "deny");
     const degradedAllow = hook("pre-tool-use", { toolCall: { name: "write_to_file", args: { TargetFile: "src/app.js", CodeContent: "x" } } });
     assert.equal(degradedAllow.status, 0);
-    assert.equal(degradedAllow.stdout.trim(), "");
+    assert.deepEqual(JSON.parse(degradedAllow.stdout), { decision: "allow" });
   } finally {
     fs.renameSync(path.join(p.proj, "shell.mjs.bak"), path.join(p.skill, "scripts", "lib", "shell.mjs"));
   }

@@ -44,7 +44,7 @@ flowchart LR
 
 ## Quick start
 
-Requires Node.js 18+ and Claude Code, Codex or GitHub Copilot. The generated skill is plain Agent Skills, so other agents can load it, but the hooks are installed and tested for these three.
+Requires Node.js 18+ and Claude Code, Codex, GitHub Copilot or Antigravity. The generated skill is plain Agent Skills, so other agents can load it; hooks are installed and tested for Claude Code, Codex and GitHub Copilot, and `--harness antigravity` is also supported (`.agents/hooks.json`).
 
 **1. Install the skill**
 
