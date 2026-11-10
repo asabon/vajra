@@ -68,7 +68,7 @@ It reads your repository, asks you a few short rounds of multiple-choice questio
 **3. Turn on the rails.** At the end it offers to install the hooks for the agents your project uses. You can also do it yourself:
 
 ```bash
-node <your-flow>/scripts/flow.mjs install --harness claude,codex,copilot   # any subset
+node <your-flow>/scripts/flow.mjs install --harness claude,codex,copilot,antigravity   # any subset
 ```
 
 **4. Work.** Invoke your new skill by name with a task, for example `/your-flow add CSV export to invoices`. The agent picks the playbook and drives the run.
@@ -232,7 +232,7 @@ $ (agent) abctl ramp search-ranker-0412 --percent 50
 Three levels (`advisory`, `standard`, `strict`) come from your profile. Install the hooks for the agents you use:
 
 ```bash
-node <your-flow>/scripts/flow.mjs install --harness claude,codex,copilot   # any subset
+node <your-flow>/scripts/flow.mjs install --harness claude,codex,copilot,antigravity   # any subset
 node <your-flow>/scripts/flow.mjs install --harness claude --scope local   # personal settings only
 node <your-flow>/scripts/flow.mjs install --harness codex --dry-run        # print the files instead of writing them
 ```
@@ -242,8 +242,9 @@ node <your-flow>/scripts/flow.mjs install --harness codex --dry-run        # pri
 | `claude` | `.claude/settings.json` (`.claude/settings.local.json` with `--scope local`) |
 | `codex` | `.codex/hooks.json`; Codex runs it once the project is trusted and you have reviewed the hooks with `/hooks` |
 | `copilot` | `.github/hooks/<your-flow>.json`, read by Copilot CLI, cloud agent and VS Code |
+| `antigravity` | `.agents/hooks.json` (nested under the skill name; maps user prompts to `PreInvocation`) |
 
-Copilot also runs the hooks in `.claude/settings.json`; the installed commands notice that and run each event once. `--mcp` also registers the optional MCP server (`.mcp.json` for Claude Code, `.codex/config.toml` for Codex; by hand for Copilot).
+Copilot also runs the hooks in `.claude/settings.json`; the installed commands notice that and run each event once. `--mcp` also registers the optional MCP server (`.mcp.json` for Claude Code, `.codex/config.toml` for Codex; by hand for Copilot and Antigravity).
 
 The [rails reference](skills/vajra/references/rails.md) spells out what is enforced, and also where enforcement ends: choices between legal exits remain the agent's judgment, `writes` covers the agent's edit tools but not files changed by shell commands, and an agent without hooks is held only by the runtime it drives.
 

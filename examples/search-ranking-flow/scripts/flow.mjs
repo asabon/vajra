@@ -5,8 +5,8 @@
 // keeps the run state (a checkpoint: which playbook owns the request, which steps are done),
 // refuses every move the graph does not allow, runs each playbook's checks before its exits open,
 // and interrupts at every [human-gate] until the human resumes it. The agent drives it as a CLI (no
-// context cost until used), and lifecycle hooks in Claude Code, Codex and GitHub Copilot (JSON on
-// stdin, a JSON deny blocks) enforce it whether or not the agent cooperates.
+// context cost until used), and lifecycle hooks in Claude Code, Codex, GitHub Copilot and
+// Antigravity (JSON on stdin, a JSON deny blocks) enforce it whether or not the agent cooperates.
 // An MCP server is available as an opt-in for clients that support MCP elicitation.
 //
 // Agent commands:
@@ -30,9 +30,9 @@
 //   flow reject --reason <text>                   refuse it
 //   flow suspend                                  turn the hooks off until flow unsuspend
 // Integration:
-//   flow hook <session-start|user-prompt|pre-tool-use|post-tool-use|stop> [--agent claude|codex|copilot]
+//   flow hook <session-start|user-prompt|pre-tool-use|post-tool-use|stop> [--agent claude|codex|copilot|antigravity]
 //                                                 lifecycle hook (JSON on stdin)
-//   flow install --harness <claude|codex|copilot>[,...]
+//   flow install --harness <claude|codex|copilot|antigravity>[,...]
 //                [--scope project|local] [--mcp] [--dry-run]
 //                                                 hooks, plus a .flow/<skill>/project.md skeleton
 //                                                 for the skill's bindings when there is none

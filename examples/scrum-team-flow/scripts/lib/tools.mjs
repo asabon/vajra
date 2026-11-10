@@ -1,13 +1,15 @@
 // Reading the agent's tool calls for the hooks: which tool it is (shell, edit or other) and what it
-// would run or change, from the payloads of Claude Code, Codex, GitHub Copilot and VS Code.
-// Payloads differ slightly between agents; read the fields every current agent provides.
+// would run or change, from the payloads of Claude Code, Codex, GitHub Copilot, VS Code and
+// Antigravity. Payloads differ slightly between agents; read the fields every current agent provides.
 
 // Claude Code: Bash; Edit, Write, MultiEdit, NotebookEdit. Codex: shell, local_shell, exec_command;
 // apply_patch. Copilot CLI: bash or powershell, create and edit ({ path }); its PascalCase hooks
 // report these as Bash, Read and Edit, and an apply_patch edit as Edit with the bare patch text as
 // tool_input. VS Code: run_in_terminal ({ command }), create_file, replace_string_in_file,
 // insert_edit_into_file, edit_notebook_file ({ filePath }), multi_replace_string_in_file
-// ({ replacements: [{ filePath }] }).
+// ({ replacements: [{ filePath }] }). Antigravity: run_command ({ CommandLine, Cwd }), write_file,
+// edit_file ({ Path, Content, Target, Replacement }), write_to_file, replace_file_content,
+// multi_replace_file_content ({ TargetFile, ReplacementChunks }).
 const SHELL_TOOLS = new Set(["bash", "powershell", "shell", "local_shell", "exec_command", "run_in_terminal", "run_command"]);
 const EDIT_TOOLS = new Set([
   "edit", "write", "create", "multiedit", "notebookedit",
