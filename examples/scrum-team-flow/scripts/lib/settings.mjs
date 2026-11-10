@@ -40,12 +40,15 @@ export function dropsHooks(abs, act) {
   const hookCommands = (t) => [...t.matchAll(/[^"'\n]*(?<![\w-])flow\.mjs[^"'\n]*/g)].map((m) => m[0].trim());
   if (hookCommands(removed).some((c) => !added.includes(c))) return true;
   if (commands(added).some((c) => !commands(removed).includes(c))) return true;
+  if (matchers(removed).some((m) => !matchers(added).includes(m))) return true;
   if (whole === undefined) return false;
   let before = "";
   try { before = fs.readFileSync(abs, "utf8"); } catch {}
-  return hookCommands(before).some((c) => !whole.includes(c)) || commands(whole).some((c) => !commands(before).includes(c));
+  return hookCommands(before).some((c) => !whole.includes(c)) || commands(whole).some((c) => !commands(before).includes(c)) || matchers(before).some((m) => !matchers(whole).includes(m));
 }
 // The commands a settings file runs: values of `command` keys (JSON and TOML), and argument lists.
 const commands = (t) => [...String(t).matchAll(/["']?\b(?:command|bash|powershell|args)["']?\s*[:=]\s*("(?:[^"\\]|\\.)*"|'[^']*'|\[[^\]]*\])/g)].map((m) => m[1]);
+// Tool matchers on existing hooks: narrowing or removing one would drop protected tools from the hook.
+const matchers = (t) => [...String(t).matchAll(/["']?\bmatcher["']?\s*[:=]\s*("(?:[^"\\]|\\.)*"|'[^']*')/g)].map((m) => m[1]);
 // VS Code loads hook files from the folders this setting lists.
 const HOOK_FILES_SETTING = /hookFilesLocations/i;

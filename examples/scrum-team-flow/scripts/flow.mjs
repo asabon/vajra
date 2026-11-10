@@ -5,8 +5,8 @@
 // keeps the run state (a checkpoint: which playbook owns the request, which steps are done),
 // refuses every move the graph does not allow, runs each playbook's checks before its exits open,
 // and interrupts at every [human-gate] until the human resumes it. The agent drives it as a CLI (no
-// context cost until used), and lifecycle hooks in Claude Code, Codex and GitHub Copilot (JSON on
-// stdin, a JSON deny blocks) enforce it whether or not the agent cooperates.
+// context cost until used), and lifecycle hooks in Claude Code, Codex, GitHub Copilot and
+// Antigravity (JSON on stdin, a JSON deny blocks) enforce it whether or not the agent cooperates.
 // An MCP server is available as an opt-in for clients that support MCP elicitation.
 //
 // Agent commands:
@@ -30,9 +30,9 @@
 //   flow reject --reason <text>                   refuse it
 //   flow suspend                                  turn the hooks off until flow unsuspend
 // Integration:
-//   flow hook <session-start|user-prompt|pre-tool-use|post-tool-use|stop> [--agent claude|codex|copilot]
+//   flow hook <session-start|user-prompt|pre-tool-use|post-tool-use|stop> [--agent claude|codex|copilot|antigravity]
 //                                                 lifecycle hook (JSON on stdin)
-//   flow install --harness <claude|codex|copilot>[,...]
+//   flow install --harness <claude|codex|copilot|antigravity>[,...]
 //                [--scope project|local] [--mcp] [--dry-run]
 //                                                 hooks, plus a .flow/<skill>/project.md skeleton
 //                                                 for the skill's bindings when there is none
@@ -226,6 +226,10 @@ function degradedHook(event, e, input, raw, root, format) {
   const state = loadState(root);
   const suspended = state.suspended === true;
   if (event === "pre-tool-use") {
+    const allow = () => {
+      if (format === "antigravity") console.log(JSON.stringify({ decision: "allow" }));
+      return 0;
+    };
     const ti = input.tool_input && typeof input.tool_input === "object" ? input.tool_input : null;
     const asks = typeof ti?.command === "string" && ASK_TO_REPAIR.test(ti.command);
     // What the call does, without the payload's metadata: Claude Code's transcript_path lies under
@@ -234,12 +238,12 @@ function degradedHook(event, e, input, raw, root, format) {
     const text = Object.keys(input).length ? JSON.stringify(asks ? { ...call, tool_input: { ...ti, command: "" } } : call) : raw;
     const t = text.replace(/\\\\/g, "/");
     const rel = relPath(root, skillDir);
-    if (suspended) return 0;
+    if (suspended) return allow();
     if (NAMES_RAILS.test(t) || (rel && t.includes(rel))) return blockTool(`the rails could not read this call (${e.message}), and it names the workflow's own files. Stop and ask the user.`, format);
     // While a question waits, a prompt for another agent session, or one scheduled or sent, would
     // arrive as a message from the user and could answer in their place.
     if ((state.request || state.run?.awaiting) && NAMES_PROMPT.test(t)) return blockTool(`the rails could not read this call (${e.message}), and it may hand an agent a prompt that answers in the user's place. Stop and ask the user.`, format);
-    return 0;
+    return allow();
   }
   if ((event === "session-start" || event === "user-prompt") && !suspended) {
     const degraded = `${tag} The rails are degraded (${e.message}): only calls that name the workflow's own files are blocked. Tell the user, who can copy the runtime from vajra again. To repair it yourself, ${state.request ? `your request to suspend the rails waits for the user: once they have answered, record what they meant with \`${flowRel(root)} answer suspend\` or \`${flowRel(root)} answer decline\`, without asking again` : `run \`${flowRel(root)} request suspend --reason "<what you will repair>"\` and ask the user whether to suspend the rails for it`}.`;
