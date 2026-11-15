@@ -28,25 +28,31 @@ export const DISABLES_HOOKS = /disableAllHooks|codex_hooks\s*=\s*false|chat\.use
 // Codex: hooks = false under [features] (or features.hooks = false).
 const TOML_OFF = /\bhooks\s*=\s*false\b/;
 
+const stripJsonComments = (t) => t.replace(/"(?:\\.|[^"\\])*"|\/\*[\s\S]*?\*\/|\/\/.*/g, (m) => (m[0] === '"' ? m : ""));
+
 function hookEntries(text) {
   if (!text || !/(?<![\w-])flow\.mjs\b/.test(text)) return [];
   const entries = [];
-  const collect = (obj) => {
+  const collect = (obj, event) => {
     if (!obj || typeof obj !== "object") return;
-    if (Array.isArray(obj)) { for (const x of obj) collect(x); return; }
+    if (Array.isArray(obj)) { for (const x of obj) collect(x, event); return; }
     const matcher = typeof obj.matcher === "string" ? obj.matcher : undefined;
     if (Array.isArray(obj.hooks)) {
-      for (const h of obj.hooks) if (typeof h?.command === "string" && /(?<![\w-])flow\.mjs\b/.test(h.command)) entries.push({ command: h.command.trim(), matcher });
+      for (const h of obj.hooks) if (typeof h?.command === "string" && /(?<![\w-])flow\.mjs\b/.test(h.command)) entries.push({ event, command: h.command.trim(), matcher });
     }
     if (typeof obj.command === "string" && /(?<![\w-])flow\.mjs\b/.test(obj.command)) {
-      entries.push({ command: obj.command.trim(), matcher });
+      entries.push({ event, command: obj.command.trim(), matcher });
     }
-    for (const v of Object.values(obj)) collect(v);
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === "hooks" && Array.isArray(v)) continue;
+      collect(v, k === "hooks" ? event : k);
+    }
   };
   try {
-    const clean = text.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
-    collect(JSON.parse(clean));
-  } catch {}
+    collect(JSON.parse(stripJsonComments(text)), undefined);
+  } catch {
+    return null;
+  }
   return entries;
 }
 
@@ -65,11 +71,15 @@ export function dropsHooks(abs, act) {
   let before = "";
   try { before = fs.readFileSync(abs, "utf8"); } catch {}
   const after = typeof apply === "function" ? apply(before) : whole;
-  if (after === undefined && whole === undefined) return false;
+  if (after !== undefined && off(after) && !off(before)) return true;
   const beforeHooks = hookEntries(before);
-  const afterHooks = after !== undefined ? hookEntries(after) : [];
-  if (beforeHooks.some((b) => !afterHooks.some((a) => a.command === b.command && a.matcher === b.matcher))) return true;
-  if (after === undefined) return false;
+  const hadHooks = (beforeHooks && beforeHooks.length > 0) || hookCommands(before).length > 0;
+  if (after === undefined) return hadHooks;
+  if (beforeHooks && beforeHooks.length > 0) {
+    const afterHooks = hookEntries(after);
+    if (!afterHooks) return true;
+    if (beforeHooks.some((b) => !afterHooks.some((a) => a.event === b.event && a.command === b.command && a.matcher === b.matcher))) return true;
+  }
   return hookCommands(before).some((c) => !after.includes(c)) || commands(after).some((c) => !commands(before).includes(c));
 }
 // The commands a settings file runs: values of `command` keys (JSON and TOML), and argument lists.
