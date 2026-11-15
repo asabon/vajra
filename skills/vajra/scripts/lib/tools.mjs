@@ -84,7 +84,18 @@ function editChange(ti) {
   const removed = [...edits.flatMap((e) => pick(e, ["old_string", "oldString", "old_str", "Target", "target", "TargetContent"])), ...patch.split("\n").filter((l) => l.startsWith("-"))].join("\n");
   const added = [...edits.flatMap((e) => pick(e, ["new_string", "newString", "new_str", "code", "Replacement", "replacement", "ReplacementContent"])), ...patch.split("\n").filter((l) => l.startsWith("+"))].join("\n");
   const whole = pick(ti, ["content", "file_text", "CodeContent", "contents", "Content"])[0];
-  return { removed, added, whole };
+  const apply = (text) => {
+    if (whole !== undefined) return whole;
+    if (typeof text !== "string") return undefined;
+    let s = text;
+    for (const e of edits) {
+      const from = pick(e, ["old_string", "oldString", "old_str", "Target", "target", "TargetContent"])[0];
+      const to = pick(e, ["new_string", "newString", "new_str", "code", "Replacement", "replacement", "ReplacementContent"])[0];
+      if (typeof from === "string" && typeof to === "string" && from) s = s.split(from).join(to);
+    }
+    return s;
+  };
+  return { removed, added, whole, apply };
 }
 
 // A line runs in PowerShell from a PowerShell tool and in a POSIX shell from Bash or anywhere but

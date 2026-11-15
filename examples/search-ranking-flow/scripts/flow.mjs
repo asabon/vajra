@@ -214,7 +214,7 @@ function answer(v, format) {
 // all work, nor let the rails be changed. It blocks only calls whose text names the workflow's own
 // files or the hook settings, which a plain search finds without understanding the call.
 const NAMES_RAILS = /\.flow\b|(?:(?<![\w-])|scripts)flow\.mjs|\.claude[\\/]|\.codex[\\/]|\.agents[\\/]|\.github[\\/](hooks|copilot)|\.vscode[\\/]settings|disableAllHooks|useHooks/i;
-const METADATA = /^(session|transcript|cwd|permission|hook_?event|timestamp|model|turn)/i;
+const METADATA = /^(session|transcript|cwd|permission|hook_?event|timestamp|model|turn|lastUserInput|conversationId|workspacePaths)/i;
 const NAMES_PROMPT = /\b(claude|codex|copilot)\b|"(prompt|message|text)"\s*:/i;
 // The one call that names flow.mjs and still goes through: asking to suspend the rails (or turning
 // them back on), written plainly, so the agent can ask the user to let it repair the skill.
@@ -231,11 +231,21 @@ function degradedHook(event, e, input, raw, root, format) {
       return 0;
     };
     const ti = input.tool_input && typeof input.tool_input === "object" ? input.tool_input : null;
-    const asks = typeof ti?.command === "string" && ASK_TO_REPAIR.test(ti.command);
+    const tc = input.toolCall?.args && typeof input.toolCall.args === "object" ? input.toolCall.args : null;
+    const cmd = (typeof ti?.command === "string" ? ti.command : "") || (typeof tc?.CommandLine === "string" ? tc.CommandLine : "") || (typeof input.command === "string" ? input.command : "");
+    const asks = typeof cmd === "string" && ASK_TO_REPAIR.test(cmd);
     // What the call does, without the payload's metadata: Claude Code's transcript_path lies under
     // ~/.claude/, which would make every call look like it names the rails.
     const call = Object.fromEntries(Object.entries(input).filter(([k]) => !METADATA.test(k)));
-    const text = Object.keys(input).length ? JSON.stringify(asks ? { ...call, tool_input: { ...ti, command: "" } } : call) : raw;
+    const cleanCall = asks
+      ? {
+          ...call,
+          ...(ti ? { tool_input: { ...ti, command: "" } } : {}),
+          ...(input.toolCall ? { toolCall: { ...input.toolCall, args: { ...tc, CommandLine: "" } } } : {}),
+          ...(typeof input.command === "string" ? { command: "" } : {}),
+        }
+      : call;
+    const text = Object.keys(input).length ? JSON.stringify(cleanCall) : raw;
     const t = text.replace(/\\\\/g, "/");
     const rel = relPath(root, skillDir);
     if (suspended) return allow();
