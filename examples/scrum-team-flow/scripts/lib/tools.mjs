@@ -154,7 +154,6 @@ function editChange(ti) {
       const from = pick(e, ["old_string", "oldString", "old_str", "Target", "target", "TargetContent"])[0];
       const to = pick(e, ["new_string", "newString", "new_str", "code", "Replacement", "replacement", "ReplacementContent"])[0];
       if (typeof from === "string" && typeof to === "string" && from) {
-        if (!s.includes(from)) return undefined;
         s = s.split(from).join(to);
         applied = true;
       }
