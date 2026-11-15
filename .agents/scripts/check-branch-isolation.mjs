@@ -101,6 +101,7 @@ const HARNESS_PATTERNS = [
   /^\.agents\//,
   /^\.githooks\//,
   /^\.coderabbit\.ya?ml$/,
+  /^\.github\/workflows\/ai-review-status\.ya?ml$/,
   /^docs\//,
 ];
 
