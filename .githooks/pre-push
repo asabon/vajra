@@ -23,7 +23,7 @@ do
   # 2. 本家 PR 用トピックブランチ (pr/*) にローカルハーネスファイルが混入していないか検査
   case "$remote_ref" in
     refs/heads/pr/*)
-      forbidden_files=$(git ls-tree -r --name-only "$local_oid" 2>/dev/null | grep -E '^(AGENTS\.md|\.agents/|\.githooks/|scratch/)')
+      forbidden_files=$(git ls-tree -r --name-only "$local_oid" 2>/dev/null | grep -E '^(AGENTS\.md|\.agents/|\.githooks/|\.coderabbit\.ya?ml|\.github/workflows/ai-review-status\.ya?ml|scratch/)')
       if [ -n "$forbidden_files" ]; then
         echo ""
         echo "================================================================="
