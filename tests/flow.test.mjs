@@ -871,7 +871,9 @@ test("the agent cannot switch the hooks off in Copilot's, VS Code's, Codex's or 
   assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"PreToolUse"', ReplacementContent: '"SessionStart"' }), 2);
   assert.equal(pre("apply_patch", { input: '*** Begin Patch\n*** Update File: .agents/hooks.json\n@@\n-        "matcher": "*",\n+        "matcher": "run_command",\n*** End Patch' }), 2);
   assert.equal(pre("apply_patch", { input: '*** Begin Patch\n*** Update File: .agents/hooks.json\n@@\n-        "nonexistent": true\n+        "nonexistent": false\n*** End Patch' }), 2);
-  fs.writeFileSync(at(".agents/hooks.json"), agJson.replace('"SessionStart": [', '"enabled": true,\n    "note": "https://example.test",\n    "SessionStart": ['));
+  assert.equal(pre("apply_patch", { input: '*** Begin Patch\n*** Update File: .agents/hooks.json\n@@\n-        "matcher": "*",\n+        "matcher": "run_command",\n*** Update File: scratch/other.json\n@@\n-        "matcher": "run_command",\n+        "matcher": "*",\n*** End Patch' }), 2);
+  fs.writeFileSync(at(".agents/hooks.json"), agJson.replace('"SessionStart": [', '"disableAllHooks": false,\n    "enabled": true,\n    "note": "https://example.test",\n    "SessionStart": ['));
+  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"demo-flow"', ReplacementContent: '"savedHooks"' }), 2);
   assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: "true", ReplacementContent: "false" }), 2);
   assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"matcher": "*"', ReplacementContent: '"matcher": "run_command"' }), 2);
   assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: "https://example.test", ReplacementContent: "https://example.org" }), 0);

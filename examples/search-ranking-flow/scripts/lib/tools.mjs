@@ -70,6 +70,7 @@ const patchPaths = (ti) => {
 function applyPatchText(text, patch) {
   let s = text.replace(/\r\n/g, "\n");
   const lines = patch.replace(/\r\n/g, "\n").split("\n");
+  if (lines.filter((line) => /^\*\*\* (?:Add|Update|Delete) File:/.test(line)).length > 1) return undefined;
   let mode = null;
   let oldLines = [];
   let newLines = [];

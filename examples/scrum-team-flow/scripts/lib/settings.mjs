@@ -30,26 +30,49 @@ const TOML_OFF = /\bhooks\s*=\s*false\b/;
 
 const stripJsonComments = (t) => t.replace(/"(?:\\.|[^"\\])*"|\/\*[\s\S]*?\*\/|\/\/.*/g, (m) => (m[0] === '"' ? m : ""));
 
+function isDisabled(abs, text) {
+  if (!text) return false;
+  if (/\.toml$/i.test(abs)) {
+    const clean = text.replace(/#.*$/gm, "");
+    return /^\s*(?:codex_hooks|(?:features\.)?hooks)\s*=\s*false\b/im.test(clean);
+  }
+  try {
+    const scan = (obj) => {
+      if (!obj || typeof obj !== "object") return false;
+      if (Array.isArray(obj)) return obj.some(scan);
+      if (obj.disableAllHooks === true || obj.enabled === false || obj["chat.useHooks"] === false || obj.chat?.useHooks === false) return true;
+      for (const [k, v] of Object.entries(obj)) {
+        if (HOOK_FILES_SETTING.test(k) && v && (typeof v !== "object" || Object.keys(v).length > 0)) return true;
+        if (scan(v)) return true;
+      }
+      return false;
+    };
+    return scan(JSON.parse(stripJsonComments(text)));
+  } catch {
+    return /"disableAllHooks"\s*:\s*true\b|"chat\.useHooks"\s*:\s*false\b|"enabled"\s*:\s*false\b/i.test(text) || HOOK_FILES_SETTING.test(text);
+  }
+}
+
 function hookEntries(text) {
   if (!text || !/(?<![\w-])flow\.mjs\b/.test(text)) return [];
   const entries = [];
-  const collect = (obj, event) => {
+  const collect = (obj, keyPath) => {
     if (!obj || typeof obj !== "object") return;
-    if (Array.isArray(obj)) { for (const x of obj) collect(x, event); return; }
+    if (Array.isArray(obj)) { for (const x of obj) collect(x, keyPath); return; }
     const matcher = typeof obj.matcher === "string" ? obj.matcher : undefined;
     if (Array.isArray(obj.hooks)) {
-      for (const h of obj.hooks) if (typeof h?.command === "string" && /(?<![\w-])flow\.mjs\b/.test(h.command)) entries.push({ event, command: h.command.trim(), matcher });
+      for (const h of obj.hooks) if (typeof h?.command === "string" && /(?<![\w-])flow\.mjs\b/.test(h.command)) entries.push({ keyPath, command: h.command.trim(), matcher });
     }
     if (typeof obj.command === "string" && /(?<![\w-])flow\.mjs\b/.test(obj.command)) {
-      entries.push({ event, command: obj.command.trim(), matcher });
+      entries.push({ keyPath, command: obj.command.trim(), matcher });
     }
     for (const [k, v] of Object.entries(obj)) {
       if (k === "hooks" && Array.isArray(v)) continue;
-      collect(v, k === "hooks" ? event : k);
+      collect(v, keyPath ? `${keyPath}\0${k}` : k);
     }
   };
   try {
-    collect(JSON.parse(stripJsonComments(text)), undefined);
+    collect(JSON.parse(stripJsonComments(text)), "");
   } catch {
     return null;
   }
@@ -71,14 +94,14 @@ export function dropsHooks(abs, act) {
   let before = "";
   try { before = fs.readFileSync(abs, "utf8"); } catch {}
   const after = typeof apply === "function" ? apply(before) : whole;
-  if (after !== undefined && off(after) && !off(before)) return true;
+  if (after !== undefined && isDisabled(abs, after) && !isDisabled(abs, before)) return true;
   const beforeHooks = hookEntries(before);
   const hadHooks = (beforeHooks && beforeHooks.length > 0) || hookCommands(before).length > 0;
   if (after === undefined) return hadHooks;
   if (beforeHooks && beforeHooks.length > 0) {
     const afterHooks = hookEntries(after);
     if (!afterHooks) return true;
-    if (beforeHooks.some((b) => !afterHooks.some((a) => a.event === b.event && a.command === b.command && a.matcher === b.matcher))) return true;
+    if (beforeHooks.some((b) => !afterHooks.some((a) => a.keyPath === b.keyPath && a.command === b.command && a.matcher === b.matcher))) return true;
   }
   return hookCommands(before).some((c) => !after.includes(c)) || commands(after).some((c) => !commands(before).includes(c));
 }
