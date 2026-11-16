@@ -866,6 +866,7 @@ test("the agent cannot switch the hooks off in Copilot's, VS Code's, Codex's or 
   p.cli("install", "--harness", "antigravity");
   const agJson = fs.readFileSync(at(".agents/hooks.json"), "utf8");
   assert.equal(pre("write_to_file", { TargetFile: at(".agents/hooks.json"), CodeContent: agJson.replace('"matcher": "*"', '"matcher": "run_command"') }), 2);
+  assert.equal(pre("write_to_file", { TargetFile: at(".agents/hooks.json"), CodeContent: JSON.stringify({ "": JSON.parse(agJson) }) }), 2);
   assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"matcher": "*"', ReplacementContent: '"matcher": "run_command"' }), 2);
   assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"*"', ReplacementContent: '"run_command"' }), 2);
   assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"PreToolUse"', ReplacementContent: '"SessionStart"' }), 2);

@@ -59,20 +59,21 @@ function hookEntries(text) {
   const collect = (obj, keyPath) => {
     if (!obj || typeof obj !== "object") return;
     if (Array.isArray(obj)) { for (const x of obj) collect(x, keyPath); return; }
+    const pathId = JSON.stringify(keyPath);
     const matcher = typeof obj.matcher === "string" ? obj.matcher : undefined;
     if (Array.isArray(obj.hooks)) {
-      for (const h of obj.hooks) if (typeof h?.command === "string" && /(?<![\w-])flow\.mjs\b/.test(h.command)) entries.push({ keyPath, command: h.command.trim(), matcher });
+      for (const h of obj.hooks) if (typeof h?.command === "string" && /(?<![\w-])flow\.mjs\b/.test(h.command)) entries.push({ keyPath: pathId, command: h.command.trim(), matcher });
     }
     if (typeof obj.command === "string" && /(?<![\w-])flow\.mjs\b/.test(obj.command)) {
-      entries.push({ keyPath, command: obj.command.trim(), matcher });
+      entries.push({ keyPath: pathId, command: obj.command.trim(), matcher });
     }
     for (const [k, v] of Object.entries(obj)) {
       if (k === "hooks" && Array.isArray(v)) continue;
-      collect(v, keyPath ? `${keyPath}\0${k}` : k);
+      collect(v, [...keyPath, k]);
     }
   };
   try {
-    collect(JSON.parse(stripJsonComments(text)), "");
+    collect(JSON.parse(stripJsonComments(text)), []);
   } catch {
     return null;
   }
