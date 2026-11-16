@@ -13,10 +13,10 @@ const norm = (t) => t.replace(/\\/g, "/").toLowerCase();
 // Files whose settings run or switch off the hooks: Claude Code's (which Copilot reads too), Codex's
 // and Copilot's own settings (they can hold hooks and disableAllHooks). VS Code's settings can turn
 // hooks off too (chat.useHooks) but are read often, so code that merely names them is not refused.
-export const HOOK_CONFIGS = [".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".codex/config.toml", ".github/copilot/settings.json", ".github/copilot/settings.local.json"];
+export const HOOK_CONFIGS = [".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".codex/config.toml", ".github/copilot/settings.json", ".github/copilot/settings.local.json", ".agents/hooks.json"];
 export function railsPaths(root, skillDir) {
   const configs = [...HOOK_CONFIGS, ".vscode/settings.json", `.github/hooks/${path.basename(skillDir)}.json`].map((f) => path.join(root, f));
-  configs.push(...[".claude/settings.json", ".codex/config.toml", ".copilot/settings.json"].map((f) => path.join(os.homedir(), f)));
+  configs.push(...[".claude/settings.json", ".codex/config.toml", ".copilot/settings.json", ".gemini/config/hooks.json"].map((f) => path.join(os.homedir(), f)));
   // Copilot runs every file in .github/hooks/, so a new one is a new hook.
   return { skill: skillDir, configs, state: path.join(root, ".flow"), hookDir: path.join(root, ".github", "hooks") };
 }
@@ -34,7 +34,7 @@ const TOML_OFF = /\bhooks\s*=\s*false\b/;
 // state or answer a gate. Other settings (permissions, models, editor options) may change.
 export function dropsHooks(abs, act) {
   const { removed, added, whole } = act.change;
-  const off = (t) => DISABLES_HOOKS.test(t) || HOOK_FILES_SETTING.test(t) || (/\.toml$/i.test(abs) && TOML_OFF.test(t));
+  const off = (t) => DISABLES_HOOKS.test(t) || HOOK_FILES_SETTING.test(t) || (/(?:\.agents|\.gemini\/config)\/hooks\.json$/i.test(norm(abs)) && /"enabled"\s*:\s*false/i.test(t)) || (/\.toml$/i.test(abs) && TOML_OFF.test(t));
   if (off(added) || off(whole ?? "")) return true;
   // A hook command taken out must come back in the same edit: re-indenting or editing next to it is fine.
   const hookCommands = (t) => [...t.matchAll(/[^"'\n]*(?<![\w-])flow\.mjs[^"'\n]*/g)].map((m) => m[0].trim());

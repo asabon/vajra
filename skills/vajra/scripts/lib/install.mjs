@@ -1,5 +1,5 @@
-// Installing the hooks (and, on request, the MCP server) for Claude Code, Codex and GitHub Copilot,
-// plus a skeleton of the project's bindings.
+// Installing the hooks (and, on request, the MCP server) for Claude Code, Codex, GitHub Copilot and
+// Antigravity, plus a skeleton of the project's bindings.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -43,6 +43,14 @@ const HARNESSES = {
     version: 1,
     note: "Copilot CLI runs repository hooks only in a folder you have trusted, and ignores UserPromptSubmit output, so run state is injected only at session start; chat approvals are still recorded.",
   },
+  antigravity: {
+    hooks: () => ".agents/hooks.json",
+    fromHooksDir: true,
+    nested: true,
+    events: { "session-start": "SessionStart", "user-prompt": "PreInvocation", "pre-tool-use": "PreToolUse", stop: "Stop" },
+    entry: (command, ev, matcher) => (ev === "pre-tool-use" ? { matcher: matcher || "*", hooks: [{ type: "command", command }] } : { type: "command", command }),
+    note: "Antigravity runs lifecycle hooks from .agents/hooks.json.",
+  },
 };
 
 function readJson(file) {
@@ -57,24 +65,30 @@ export function install(root, o) {
   if (!["project", "local"].includes(scope)) throw new Stop("--scope must be project or local", 2);
   const script = path.join(here, "flow.mjs");
   const rel = relPath(root, script);
+  const relAgents = relPath(path.join(root, ".agents"), script);
   const inRoot = !rel.startsWith("..") && !path.isAbsolute(rel);
   const writes = new Map();
   const report = [];
   const load = (file) => (writes.has(file) ? writes.get(file) : readJson(path.join(root, file)));
 
   // This skill's hook commands in any form an earlier install wrote; they are replaced, not added to.
-  const ours = (c) => typeof c === "string" && /flow\.mjs["']?\s+hook\s/.test(c) && (c.includes(rel) || c.includes(script));
+  const ours = (c) => typeof c === "string" && /flow\.mjs["']?\s+hook\s/.test(c) && (c.includes(rel) || c.includes(relAgents) || c.includes(script));
 
   for (const name of names) {
     const h = HARNESSES[name];
-    const target = !inRoot ? JSON.stringify(script) : h.fromRoot ? `"${ROOT}/${rel}"` : JSON.stringify(rel);
     const file = h.hooks(scope);
+    const rawTarget = !inRoot ? script : h.fromHooksDir ? relPath(path.join(root, path.dirname(file)), script) : rel;
+    const safeTarget = h.fromHooksDir && /^[A-Za-z0-9_./:-]+$/.test(rawTarget) ? rawTarget : JSON.stringify(rawTarget);
+    const target = inRoot && h.fromRoot ? `"${ROOT}/${rel}"` : safeTarget;
     const cfg = load(file);
     if (h.version) cfg.version ||= h.version;
-    const events = (cfg.hooks ||= {});
+    const events = h.nested
+      ? (Object.hasOwn(cfg, skillName) && cfg[skillName] && typeof cfg[skillName] === "object" ? cfg[skillName] : (cfg[skillName] = {}))
+      : (Object.hasOwn(cfg, "hooks") && cfg.hooks && typeof cfg.hooks === "object" ? cfg.hooks : (cfg.hooks = {}));
     const changed = [];
-    for (const [ev, [native, matcher]] of [...Object.entries(EVENTS).map(([e, n]) => [e, [n]]), ...Object.entries(h.extra || {})]) {
-      const entry = { ...(matcher ? { matcher } : {}), ...h.entry(`node ${target} hook ${ev} --agent ${name}`) };
+    const eventMap = h.events || EVENTS;
+    for (const [ev, [native, matcher]] of [...Object.entries(eventMap).map(([e, n]) => [e, [n]]), ...Object.entries(h.extra || {})]) {
+      const entry = { ...(matcher ? { matcher } : {}), ...h.entry(`node ${target} hook ${ev} --agent ${name}`, ev, matcher) };
       const before = JSON.stringify(events[native] || []);
       const list = (events[native] || [])
         .map((x) => (x.hooks ? { ...x, hooks: x.hooks.filter((y) => !ours(y.command)) } : x))
