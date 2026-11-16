@@ -28,22 +28,83 @@ export const DISABLES_HOOKS = /disableAllHooks|codex_hooks\s*=\s*false|chat\.use
 // Codex: hooks = false under [features] (or features.hooks = false).
 const TOML_OFF = /\bhooks\s*=\s*false\b/;
 
+const stripJsonComments = (t) => t.replace(/"(?:\\.|[^"\\])*"|\/\*[\s\S]*?\*\/|\/\/.*/g, (m) => (m[0] === '"' ? m : ""));
+
+function isDisabled(abs, text) {
+  if (!text) return false;
+  if (/\.toml$/i.test(abs)) {
+    const clean = text.replace(/#.*$/gm, "");
+    return /^\s*(?:codex_hooks|(?:features\.)?hooks)\s*=\s*false\b/im.test(clean);
+  }
+  try {
+    const scan = (obj) => {
+      if (!obj || typeof obj !== "object") return false;
+      if (Array.isArray(obj)) return obj.some(scan);
+      if (obj.disableAllHooks === true || obj.enabled === false || obj["chat.useHooks"] === false || obj.chat?.useHooks === false) return true;
+      for (const [k, v] of Object.entries(obj)) {
+        if (HOOK_FILES_SETTING.test(k) && v && (typeof v !== "object" || Object.keys(v).length > 0)) return true;
+        if (scan(v)) return true;
+      }
+      return false;
+    };
+    return scan(JSON.parse(stripJsonComments(text)));
+  } catch {
+    return /"disableAllHooks"\s*:\s*true\b|"chat\.useHooks"\s*:\s*false\b|"enabled"\s*:\s*false\b/i.test(text) || HOOK_FILES_SETTING.test(text);
+  }
+}
+
+function hookEntries(text) {
+  if (!text || !/(?<![\w-])flow\.mjs\b/.test(text)) return [];
+  const entries = [];
+  const collect = (obj, keyPath) => {
+    if (!obj || typeof obj !== "object") return;
+    if (Array.isArray(obj)) { for (const x of obj) collect(x, keyPath); return; }
+    const pathId = JSON.stringify(keyPath);
+    const matcher = typeof obj.matcher === "string" ? obj.matcher : undefined;
+    if (Array.isArray(obj.hooks)) {
+      for (const h of obj.hooks) if (typeof h?.command === "string" && /(?<![\w-])flow\.mjs\b/.test(h.command)) entries.push({ keyPath: pathId, command: h.command.trim(), matcher });
+    }
+    if (typeof obj.command === "string" && /(?<![\w-])flow\.mjs\b/.test(obj.command)) {
+      entries.push({ keyPath: pathId, command: obj.command.trim(), matcher });
+    }
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === "hooks" && Array.isArray(v)) continue;
+      collect(v, [...keyPath, k]);
+    }
+  };
+  try {
+    collect(JSON.parse(stripJsonComments(text)), []);
+  } catch {
+    return null;
+  }
+  return entries;
+}
+
 // Whether an edit of a hook settings file changes what the hooks run: removes a flow.mjs hook,
 // turns hooks off, points the agent at other hook files, or adds a command. A command the agent
 // adds would run at the next lifecycle event, outside the tool hook, where it could write the run
 // state or answer a gate. Other settings (permissions, models, editor options) may change.
 export function dropsHooks(abs, act) {
-  const { removed, added, whole } = act.change;
+  const { removed, added, whole, apply } = act.change;
   const off = (t) => DISABLES_HOOKS.test(t) || HOOK_FILES_SETTING.test(t) || (/\.toml$/i.test(abs) && TOML_OFF.test(t));
   if (off(added) || off(whole ?? "")) return true;
   // A hook command taken out must come back in the same edit: re-indenting or editing next to it is fine.
   const hookCommands = (t) => [...t.matchAll(/[^"'\n]*(?<![\w-])flow\.mjs[^"'\n]*/g)].map((m) => m[0].trim());
   if (hookCommands(removed).some((c) => !added.includes(c))) return true;
   if (commands(added).some((c) => !commands(removed).includes(c))) return true;
-  if (whole === undefined) return false;
   let before = "";
   try { before = fs.readFileSync(abs, "utf8"); } catch {}
-  return hookCommands(before).some((c) => !whole.includes(c)) || commands(whole).some((c) => !commands(before).includes(c));
+  const after = typeof apply === "function" ? apply(before) : whole;
+  if (after !== undefined && isDisabled(abs, after) && !isDisabled(abs, before)) return true;
+  const beforeHooks = hookEntries(before);
+  const hadHooks = (beforeHooks && beforeHooks.length > 0) || hookCommands(before).length > 0;
+  if (after === undefined) return hadHooks;
+  if (beforeHooks && beforeHooks.length > 0) {
+    const afterHooks = hookEntries(after);
+    if (!afterHooks) return true;
+    if (beforeHooks.some((b) => !afterHooks.some((a) => a.keyPath === b.keyPath && a.command === b.command && a.matcher === b.matcher))) return true;
+  }
+  return hookCommands(before).some((c) => !after.includes(c)) || commands(after).some((c) => !commands(before).includes(c));
 }
 // The commands a settings file runs: values of `command` keys (JSON and TOML), and argument lists.
 const commands = (t) => [...String(t).matchAll(/["']?\b(?:command|bash|powershell|args)["']?\s*[:=]\s*("(?:[^"\\]|\\.)*"|'[^']*'|\[[^\]]*\])/g)].map((m) => m[1]);

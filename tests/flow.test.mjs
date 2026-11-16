@@ -846,7 +846,7 @@ test("install replaces the hooks an earlier version wrote instead of adding to t
   assert.match(legacy.stdout, /"permissionDecision":"deny"/);
 });
 
-test("the agent cannot switch the hooks off in Copilot's, VS Code's or Codex's settings", () => {
+test("the agent cannot switch the hooks off in Copilot's, VS Code's, Codex's or Antigravity's settings", () => {
   const p = project();
   const pre = (tool_name, tool_input) => p.hook("pre-tool-use", { tool_name, tool_input }).status;
   const at = (f) => path.join(p.proj, f);
@@ -854,14 +854,40 @@ test("the agent cannot switch the hooks off in Copilot's, VS Code's or Codex's s
   assert.equal(pre("Write", { file_path: at(".vscode/settings.json"), content: '{ "chat.useHooks": false }' }), 2);
   assert.equal(pre("Write", { file_path: at(".codex/config.toml"), content: "[features]\nhooks = false\n" }), 2);
   assert.equal(pre("Write", { file_path: at(".codex/config.toml"), content: "features.hooks=false\n" }), 2);
+  assert.equal(pre("write_to_file", { TargetFile: at(".agents/hooks.json"), CodeContent: '{ "demo-flow": { "enabled": false } }' }), 2);
+  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"matcher": "*"', ReplacementContent: '"matcher": "*", "command": "echo evil"' }), 2);
+  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: "flow.mjs hook pre-tool-use", ReplacementContent: "echo noop" }), 2);
   assert.equal(p.bash("echo '{\"chat.useHooks\": false}' > .vscode/settings.json").status, 2);
   assert.equal(p.bash("rm .github/hooks/demo-flow.json").status, 2);
+  assert.equal(p.bash("rm .agents/hooks.json").status, 2);
   // Everyday edits of the same files go through.
   fs.mkdirSync(at(".vscode"));
   fs.writeFileSync(at(".vscode/settings.json"), '{\n  "editor.tabSize": 2\n}\n');
+  p.cli("install", "--harness", "antigravity");
+  const agJson = fs.readFileSync(at(".agents/hooks.json"), "utf8");
+  assert.equal(pre("write_to_file", { TargetFile: at(".agents/hooks.json"), CodeContent: agJson.replace('"matcher": "*"', '"matcher": "run_command"') }), 2);
+  assert.equal(pre("write_to_file", { TargetFile: at(".agents/hooks.json"), CodeContent: JSON.stringify({ "": JSON.parse(agJson) }) }), 2);
+  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"matcher": "*"', ReplacementContent: '"matcher": "run_command"' }), 2);
+  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"*"', ReplacementContent: '"run_command"' }), 2);
+  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"PreToolUse"', ReplacementContent: '"SessionStart"' }), 2);
+  assert.equal(pre("apply_patch", { input: '*** Begin Patch\n*** Update File: .agents/hooks.json\n@@\n-        "matcher": "*",\n+        "matcher": "run_command",\n*** End Patch' }), 2);
+  assert.equal(pre("apply_patch", { input: '*** Begin Patch\n*** Update File: .agents/hooks.json\n@@\n-        "nonexistent": true\n+        "nonexistent": false\n*** End Patch' }), 2);
+  assert.equal(pre("apply_patch", { input: '*** Begin Patch\n*** Update File: .agents/hooks.json\n@@\n-        "matcher": "*",\n+        "matcher": "run_command",\n*** Update File: scratch/other.json\n@@\n-        "matcher": "run_command",\n+        "matcher": "*",\n*** End Patch' }), 2);
+  fs.writeFileSync(at(".agents/hooks.json"), agJson.replace('"SessionStart": [', '"disableAllHooks": false,\n    "enabled": true,\n    "note": "https://example.test",\n    "SessionStart": ['));
+  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"demo-flow"', ReplacementContent: '"savedHooks"' }), 2);
+  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: "true", ReplacementContent: "false" }), 2);
+  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"matcher": "*"', ReplacementContent: '"matcher": "run_command"' }), 2);
+  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: "https://example.test", ReplacementContent: "https://example.org" }), 0);
+  fs.writeFileSync(at(".agents/hooks.json"), agJson);
   assert.equal(pre("Edit", { file_path: at(".vscode/settings.json"), old_string: '"editor.tabSize": 2', new_string: '"editor.tabSize": 4' }), 0);
   assert.equal(pre("Write", { file_path: at(".vscode/settings.json"), content: '{ "chat.useHooks": true, "files.eol": "\\n" }' }), 0);
   assert.equal(pre("Write", { file_path: at(".codex/config.toml"), content: 'model = "o4"\n' }), 0);
+  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"SessionStart": [', ReplacementContent: '"enabled": true,\n    "SessionStart": [' }), 0);
+  fs.mkdirSync(at(".claude"), { recursive: true });
+  fs.writeFileSync(at(".claude/settings.json"), JSON.stringify({ hooks: {
+    PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "echo mine" }] }],
+  } }));
+  assert.equal(pre("Edit", { file_path: at(".claude/settings.json"), old_string: '"matcher": "Bash"', new_string: '"matcher": "sh"' }), 0);
   assert.equal(p.bash("cat .vscode/settings.json").status, 0);
   assert.equal(p.bash("python3 -c \"import json; print(json.load(open('.vscode/settings.json')))\"").status, 0);
 });
@@ -927,11 +953,48 @@ test("Antigravity gets a structured deny and injectSteps context", () => {
   assert.equal(allowed.status, 0);
   assert.deepEqual(JSON.parse(allowed.stdout), { decision: "allow" });
 
+  const readAllowed = hook("pre-tool-use", { toolCall: { name: "read_file", args: { Path: "src/app.js" } } });
+  assert.equal(readAllowed.status, 0);
+  assert.deepEqual(JSON.parse(readAllowed.stdout), { decision: "allow" });
+
+  // Format auto-detection when --agent antigravity is omitted.
+  const autoHook = (event, input) => spawnSync(process.execPath, [path.join(p.skill, "scripts", "flow.mjs"), "hook", event], {
+    cwd: p.proj, encoding: "utf8", env: { ...process.env, CLAUDE_PROJECT_DIR: "", FLOW_ROOT: "" }, input: JSON.stringify({ cwd: p.proj, conversationId: "c1", workspacePaths: [p.proj], ...input }),
+  });
+  const autoStart = JSON.parse(autoHook("session-start", {}).stdout);
+  assert.ok(Array.isArray(autoStart.injectSteps));
+  const autoDenied = autoHook("pre-tool-use", { toolCall: { name: "run_command", args: { CommandLine: "npm run deploy" } } });
+  assert.equal(autoDenied.status, 0);
+  assert.equal(JSON.parse(autoDenied.stdout).decision, "deny");
+  const autoAllowed = autoHook("pre-tool-use", { toolCall: { name: "read_file", args: { Path: "src/app.js" } } });
+  assert.equal(autoAllowed.status, 0);
+  assert.deepEqual(JSON.parse(autoAllowed.stdout), { decision: "allow" });
+
   const stopped = hook("stop", {});
   assert.equal(stopped.status, 0);
   const stopOut = JSON.parse(stopped.stdout);
   assert.equal(stopOut.decision, "continue");
   assert.match(stopOut.reason, /in progress/);
+
+  // Degraded hook mode still protects .agents/hooks.json in Antigravity format.
+  fs.renameSync(path.join(p.skill, "scripts", "lib", "shell.mjs"), path.join(p.proj, "shell.mjs.bak"));
+  try {
+    const degradedDeny = hook("pre-tool-use", { toolCall: { name: "write_to_file", args: { TargetFile: ".agents/hooks.json", CodeContent: "{}" } } });
+    assert.equal(degradedDeny.status, 0);
+    assert.equal(JSON.parse(degradedDeny.stdout).decision, "deny");
+    const degradedAllow = hook("pre-tool-use", { toolCall: { name: "write_to_file", args: { TargetFile: "src/app.js", CodeContent: "x" } } });
+    assert.equal(degradedAllow.status, 0);
+    assert.deepEqual(JSON.parse(degradedAllow.stdout), { decision: "allow" });
+    const flowRel = path.relative(p.proj, path.join(p.skill, "scripts", "flow.mjs")).replace(/\\/g, "/");
+    const degradedRepair = hook("pre-tool-use", { toolCall: { name: "run_command", args: { CommandLine: `node "${flowRel}" request suspend --reason "fix"` } } });
+    assert.equal(degradedRepair.status, 0);
+    assert.deepEqual(JSON.parse(degradedRepair.stdout), { decision: "allow" });
+    const degradedPromptMeta = hook("pre-tool-use", { lastUserInput: "how to fix flow.mjs and .flow/state.json?", toolCall: { name: "write_to_file", args: { TargetFile: "src/app.js", CodeContent: "x" } } });
+    assert.equal(degradedPromptMeta.status, 0);
+    assert.deepEqual(JSON.parse(degradedPromptMeta.stdout), { decision: "allow" });
+  } finally {
+    fs.renameSync(path.join(p.proj, "shell.mjs.bak"), path.join(p.skill, "scripts", "lib", "shell.mjs"));
+  }
 });
 
 test("Antigravity captures human gate reply and protects hooks via Cwd and multi-replace", () => {

@@ -1,5 +1,5 @@
-// Installing the hooks (and, on request, the MCP server) for Claude Code, Codex and GitHub Copilot,
-// plus a skeleton of the project's bindings.
+// Installing the hooks (and, on request, the MCP server) for Claude Code, Codex, GitHub Copilot and
+// Antigravity, plus a skeleton of the project's bindings.
 
 import fs from "node:fs";
 import path from "node:path";

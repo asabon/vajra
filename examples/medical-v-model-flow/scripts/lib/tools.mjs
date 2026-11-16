@@ -1,13 +1,15 @@
 // Reading the agent's tool calls for the hooks: which tool it is (shell, edit or other) and what it
-// would run or change, from the payloads of Claude Code, Codex, GitHub Copilot and VS Code.
-// Payloads differ slightly between agents; read the fields every current agent provides.
+// would run or change, from the payloads of Claude Code, Codex, GitHub Copilot, VS Code and
+// Antigravity. Payloads differ slightly between agents; read the fields every current agent provides.
 
 // Claude Code: Bash; Edit, Write, MultiEdit, NotebookEdit. Codex: shell, local_shell, exec_command;
 // apply_patch. Copilot CLI: bash or powershell, create and edit ({ path }); its PascalCase hooks
 // report these as Bash, Read and Edit, and an apply_patch edit as Edit with the bare patch text as
 // tool_input. VS Code: run_in_terminal ({ command }), create_file, replace_string_in_file,
 // insert_edit_into_file, edit_notebook_file ({ filePath }), multi_replace_string_in_file
-// ({ replacements: [{ filePath }] }).
+// ({ replacements: [{ filePath }] }). Antigravity: run_command ({ CommandLine, Cwd }), write_file,
+// edit_file ({ Path, Content, Target, Replacement }), write_to_file, replace_file_content,
+// multi_replace_file_content ({ TargetFile, ReplacementChunks }).
 const SHELL_TOOLS = new Set(["bash", "powershell", "shell", "local_shell", "exec_command", "run_in_terminal", "run_command"]);
 const EDIT_TOOLS = new Set([
   "edit", "write", "create", "multiedit", "notebookedit",
@@ -65,10 +67,72 @@ const patchPaths = (ti) => {
   return [...text.matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm)].map((m) => m[1].trim());
 };
 
+function applyPatchText(text, patch) {
+  let s = text.replace(/\r\n/g, "\n");
+  const lines = patch.replace(/\r\n/g, "\n").split("\n");
+  if (lines.filter((line) => /^\*\*\* (?:Add|Update|Delete) File:/.test(line)).length > 1) return undefined;
+  let mode = null;
+  let oldLines = [];
+  let newLines = [];
+  let applied = false;
+  const flushHunk = () => {
+    if (!oldLines.length && !newLines.length) return true;
+    const oldBlock = oldLines.join("\n");
+    const newBlock = newLines.join("\n");
+    oldLines = [];
+    newLines = [];
+    if (oldBlock) {
+      if (!s.includes(oldBlock)) return false;
+      s = s.replace(oldBlock, () => newBlock);
+      applied = true;
+      return true;
+    }
+    if (mode === "add" || !s) {
+      s = s ? `${s}\n${newBlock}` : newBlock;
+      applied = true;
+      return true;
+    }
+    return false;
+  };
+  for (const line of lines) {
+    if (line.startsWith("*** Begin Patch") || line.startsWith("*** End Patch") || line.startsWith("*** End of File") || line.startsWith("*** Move to:")) continue;
+    if (line.startsWith("*** Delete File:")) {
+      if (!flushHunk()) return undefined;
+      s = "";
+      mode = "delete";
+      applied = true;
+      continue;
+    }
+    if (line.startsWith("*** Add File:")) {
+      if (!flushHunk()) return undefined;
+      s = "";
+      mode = "add";
+      continue;
+    }
+    if (line.startsWith("*** Update File:")) {
+      if (!flushHunk()) return undefined;
+      mode = "update";
+      continue;
+    }
+    if (line.startsWith("@@")) {
+      if (!flushHunk()) return undefined;
+      continue;
+    }
+    if (line.startsWith("-")) oldLines.push(line.slice(1));
+    else if (line.startsWith("+")) newLines.push(line.slice(1));
+    else if (line.startsWith(" ")) {
+      oldLines.push(line.slice(1));
+      newLines.push(line.slice(1));
+    }
+  }
+  if (!flushHunk()) return undefined;
+  return applied ? s : undefined;
+}
+
 /**
  * Extracts removed and added chunks or whole file content from an edit call.
  * @param {object} ti - Tool input dictionary for an edit tool
- * @returns {{ removed: string, added: string, whole: string | undefined }} Extracted text changes
+ * @returns {{ removed: string, added: string, whole: string | undefined, apply: (text: string) => string | undefined }} Extracted text changes
  */
 function editChange(ti) {
   const chunks = [
@@ -82,7 +146,27 @@ function editChange(ti) {
   const removed = [...edits.flatMap((e) => pick(e, ["old_string", "oldString", "old_str", "Target", "target", "TargetContent"])), ...patch.split("\n").filter((l) => l.startsWith("-"))].join("\n");
   const added = [...edits.flatMap((e) => pick(e, ["new_string", "newString", "new_str", "code", "Replacement", "replacement", "ReplacementContent"])), ...patch.split("\n").filter((l) => l.startsWith("+"))].join("\n");
   const whole = pick(ti, ["content", "file_text", "CodeContent", "contents", "Content"])[0];
-  return { removed, added, whole };
+  const apply = (text) => {
+    if (whole !== undefined) return whole;
+    if (typeof text !== "string") return undefined;
+    let s = text;
+    let applied = false;
+    for (const e of edits) {
+      const from = pick(e, ["old_string", "oldString", "old_str", "Target", "target", "TargetContent"])[0];
+      const to = pick(e, ["new_string", "newString", "new_str", "code", "Replacement", "replacement", "ReplacementContent"])[0];
+      if (typeof from === "string" && typeof to === "string" && from) {
+        s = s.split(from).join(to);
+        applied = true;
+      }
+    }
+    if (patch) {
+      s = applyPatchText(s, patch);
+      if (s === undefined) return undefined;
+      applied = true;
+    }
+    return applied ? s : undefined;
+  };
+  return { removed, added, whole, apply };
 }
 
 // A line runs in PowerShell from a PowerShell tool and in a POSIX shell from Bash or anywhere but
