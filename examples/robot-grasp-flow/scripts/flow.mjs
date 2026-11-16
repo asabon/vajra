@@ -5,8 +5,8 @@
 // keeps the run state (a checkpoint: which playbook owns the request, which steps are done),
 // refuses every move the graph does not allow, runs each playbook's checks before its exits open,
 // and interrupts at every [human-gate] until the human resumes it. The agent drives it as a CLI (no
-// context cost until used), and lifecycle hooks in Claude Code, Codex and GitHub Copilot (JSON on
-// stdin, a JSON deny blocks) enforce it whether or not the agent cooperates.
+// context cost until used), and lifecycle hooks in Claude Code, Codex, GitHub Copilot and
+// Antigravity (JSON on stdin, a JSON deny blocks) enforce it whether or not the agent cooperates.
 // An MCP server is available as an opt-in for clients that support MCP elicitation.
 //
 // Agent commands:
@@ -30,9 +30,9 @@
 //   flow reject --reason <text>                   refuse it
 //   flow suspend                                  turn the hooks off until flow unsuspend
 // Integration:
-//   flow hook <session-start|user-prompt|pre-tool-use|post-tool-use|stop> [--agent claude|codex|copilot]
+//   flow hook <session-start|user-prompt|pre-tool-use|post-tool-use|stop> [--agent claude|codex|copilot|antigravity]
 //                                                 lifecycle hook (JSON on stdin)
-//   flow install --harness <claude|codex|copilot>[,...]
+//   flow install --harness <claude|codex|copilot|antigravity>[,...]
 //                [--scope project|local] [--mcp] [--dry-run]
 //                                                 hooks, plus a .flow/<skill>/project.md skeleton
 //                                                 for the skill's bindings when there is none
@@ -181,6 +181,9 @@ export const suspension = {
 // ---------- hook answers, in the fields each agent reads ----------
 
 function context(eventName, text, format) {
+  if (format === "antigravity") {
+    return JSON.stringify({ injectSteps: [{ systemMessage: { systemMessage: text } }] });
+  }
   // hookSpecificOutput.additionalContext is understood by the agents that inject hook context.
   // Copilot CLI reads only a top-level additionalContext; VS Code reads hookSpecificOutput.
   const out = { hookSpecificOutput: { hookEventName: eventName, additionalContext: text } };
@@ -189,15 +192,19 @@ function context(eventName, text, format) {
 
 // A deny in JSON on stdout (exit 0) is read alike by Claude Code, Codex, Copilot and VS Code, and,
 // unlike exit code 2, survives PowerShell, which reports any failed native command as exit 1.
-function blockTool(reason) {
+function blockTool(reason, format) {
+  if (format === "antigravity") {
+    console.log(JSON.stringify({ decision: "deny", reason: `${tag} Blocked: ${reason}` }));
+    return 0;
+  }
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `${tag} Blocked: ${reason}` } }));
   return 0;
 }
 
 function answer(v, format) {
   if (!v) return 0;
-  if (v.deny) return blockTool(v.deny);
-  if (v.block) console.log(JSON.stringify({ decision: "block", reason: `${tag} ${v.block}` }));
+  if (v.deny) return blockTool(v.deny, format);
+  if (v.block) console.log(JSON.stringify(format === "antigravity" ? { decision: "continue", reason: `${tag} ${v.block}` } : { decision: "block", reason: `${tag} ${v.block}` }));
   else if (v.context !== undefined) console.log(context(v.event, v.context, format));
   else if (v.unknown !== undefined) console.error(`unknown hook event "${v.unknown}"`);
   return 0;
@@ -206,8 +213,8 @@ function answer(v, format) {
 // A hook that crashed (on a payload it does not understand, or with a broken runtime) must not stop
 // all work, nor let the rails be changed. It blocks only calls whose text names the workflow's own
 // files or the hook settings, which a plain search finds without understanding the call.
-const NAMES_RAILS = /\.flow\b|(?:(?<![\w-])|scripts)flow\.mjs|\.claude[\\/]|\.codex[\\/]|\.github[\\/](hooks|copilot)|\.vscode[\\/]settings|disableAllHooks|useHooks/i;
-const METADATA = /^(session|transcript|cwd|permission|hook_?event|timestamp|model|turn)/i;
+const NAMES_RAILS = /\.flow\b|(?:(?<![\w-])|scripts)flow\.mjs|\.claude[\\/]|\.codex[\\/]|\.agents[\\/]|\.github[\\/](hooks|copilot)|\.vscode[\\/]settings|disableAllHooks|useHooks/i;
+const METADATA = /^(session|transcript|cwd|permission|hook_?event|timestamp|model|turn|lastUserInput|conversationId|workspacePaths)/i;
 const NAMES_PROMPT = /\b(claude|codex|copilot)\b|"(prompt|message|text)"\s*:/i;
 // The one call that names flow.mjs and still goes through: asking to suspend the rails (or turning
 // them back on), written plainly, so the agent can ask the user to let it repair the skill.
@@ -219,20 +226,34 @@ function degradedHook(event, e, input, raw, root, format) {
   const state = loadState(root);
   const suspended = state.suspended === true;
   if (event === "pre-tool-use") {
+    const allow = () => {
+      if (format === "antigravity") console.log(JSON.stringify({ decision: "allow" }));
+      return 0;
+    };
     const ti = input.tool_input && typeof input.tool_input === "object" ? input.tool_input : null;
-    const asks = typeof ti?.command === "string" && ASK_TO_REPAIR.test(ti.command);
+    const tc = input.toolCall?.args && typeof input.toolCall.args === "object" ? input.toolCall.args : null;
+    const cmd = (typeof ti?.command === "string" ? ti.command : "") || (typeof tc?.CommandLine === "string" ? tc.CommandLine : "") || (typeof input.command === "string" ? input.command : "");
+    const asks = typeof cmd === "string" && ASK_TO_REPAIR.test(cmd);
     // What the call does, without the payload's metadata: Claude Code's transcript_path lies under
     // ~/.claude/, which would make every call look like it names the rails.
     const call = Object.fromEntries(Object.entries(input).filter(([k]) => !METADATA.test(k)));
-    const text = Object.keys(input).length ? JSON.stringify(asks ? { ...call, tool_input: { ...ti, command: "" } } : call) : raw;
+    const cleanCall = asks
+      ? {
+          ...call,
+          ...(ti ? { tool_input: { ...ti, command: "" } } : {}),
+          ...(input.toolCall ? { toolCall: { ...input.toolCall, args: { ...tc, CommandLine: "" } } } : {}),
+          ...(typeof input.command === "string" ? { command: "" } : {}),
+        }
+      : call;
+    const text = Object.keys(input).length ? JSON.stringify(cleanCall) : raw;
     const t = text.replace(/\\\\/g, "/");
     const rel = relPath(root, skillDir);
-    if (suspended) return 0;
-    if (NAMES_RAILS.test(t) || (rel && t.includes(rel))) return blockTool(`the rails could not read this call (${e.message}), and it names the workflow's own files. Stop and ask the user.`);
+    if (suspended) return allow();
+    if (NAMES_RAILS.test(t) || (rel && t.includes(rel))) return blockTool(`the rails could not read this call (${e.message}), and it names the workflow's own files. Stop and ask the user.`, format);
     // While a question waits, a prompt for another agent session, or one scheduled or sent, would
     // arrive as a message from the user and could answer in their place.
-    if ((state.request || state.run?.awaiting) && NAMES_PROMPT.test(t)) return blockTool(`the rails could not read this call (${e.message}), and it may hand an agent a prompt that answers in the user's place. Stop and ask the user.`);
-    return 0;
+    if ((state.request || state.run?.awaiting) && NAMES_PROMPT.test(t)) return blockTool(`the rails could not read this call (${e.message}), and it may hand an agent a prompt that answers in the user's place. Stop and ask the user.`, format);
+    return allow();
   }
   if ((event === "session-start" || event === "user-prompt") && !suspended) {
     const degraded = `${tag} The rails are degraded (${e.message}): only calls that name the workflow's own files are blocked. Tell the user, who can copy the runtime from vajra again. To repair it yourself, ${state.request ? `your request to suspend the rails waits for the user: once they have answered, record what they meant with \`${flowRel(root)} answer suspend\` or \`${flowRel(root)} answer decline\`, without asking again` : `run \`${flowRel(root)} request suspend --reason "<what you will repair>"\` and ask the user whether to suspend the rails for it`}.`;
@@ -265,12 +286,13 @@ export function main(argv) {
   if (cmd === "hook") {
     const { o } = parseArgs(rest.slice(1));
     const agent = o.agent || (o.format === "copilot" ? "copilot" : undefined); // --format copilot: hooks installed before --agent
-    let format = agent === "copilot" ? "copilot" : undefined;
+    let format = agent === "copilot" ? "copilot" : agent === "antigravity" ? "antigravity" : undefined;
     let raw = "";
     try { raw = fs.readFileSync(0, "utf8"); } catch {}
     let input = {};
     try { input = JSON.parse(raw || "{}"); } catch {}
     if (!input || typeof input !== "object") input = {};
+    if (!format && input.conversationId && input.workspacePaths) format = "antigravity";
     const root = findRoot(typeof input.cwd === "string" && input.cwd ? input.cwd : process.cwd());
     // Copilot CLI (and VS Code with chat.useClaudeHooks) also runs the hooks in .claude/settings*.json.
     // Claude Code always sets CLAUDE_PROJECT_DIR and sends no timestamp; Copilot and VS Code do the
@@ -287,13 +309,26 @@ export function main(argv) {
     }
     // The user's own message is kept before anything else, so it is there with lib/ broken.
     if (rest[0] === "user-prompt") {
-      try { hear(root, [String(input.prompt ?? input.user_prompt ?? input.message ?? "")]); } catch {}
+      try {
+        const text = String(input.prompt ?? input.user_prompt ?? input.message ?? input.lastUserInput ?? "").trim();
+        if (text) {
+          const st = loadState(root);
+          const waitingSince = st.run?.awaiting?.since || st.request?.since;
+          const lastHeard = (st.heard || []).at(-1);
+          const isDuplicate = waitingSince && lastHeard && lastHeard.at >= waitingSince && lastHeard.text?.trim() === text;
+          if (!isDuplicate) hear(root, [text]);
+        }
+      } catch {}
     }
     try {
       if (loadError) throw new Error(`the runtime did not load: ${loadError}`);
       // Only Claude Code itself runs Bash in a POSIX shell on Windows; see lib/tools.mjs.
       const v = lib.runHook(rest[0], input, root, { bashIsPosix: agent === "claude" && format !== "copilot" });
       if (v?.heard) { hear(root, v.heard); return 0; }
+      if (!v && rest[0] === "pre-tool-use" && format === "antigravity") {
+        console.log(JSON.stringify({ decision: "allow" }));
+        return 0;
+      }
       return answer(v, format);
     } catch (e) {
       return degradedHook(rest[0], e, input, raw, root, format);
