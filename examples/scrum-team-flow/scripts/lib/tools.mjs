@@ -1,17 +1,21 @@
+import path from "node:path";
+
 // Reading the agent's tool calls for the hooks: which tool it is (shell, edit or other) and what it
-// would run or change, from the payloads of Claude Code, Codex, GitHub Copilot and VS Code.
-// Payloads differ slightly between agents; read the fields every current agent provides.
+// would run or change, from the payloads of Claude Code, Codex, GitHub Copilot, VS Code and
+// Antigravity. Payloads differ slightly between agents; read the fields every current agent provides.
 
 // Claude Code: Bash; Edit, Write, MultiEdit, NotebookEdit. Codex: shell, local_shell, exec_command;
 // apply_patch. Copilot CLI: bash or powershell, create and edit ({ path }); its PascalCase hooks
 // report these as Bash, Read and Edit, and an apply_patch edit as Edit with the bare patch text as
 // tool_input. VS Code: run_in_terminal ({ command }), create_file, replace_string_in_file,
 // insert_edit_into_file, edit_notebook_file ({ filePath }), multi_replace_string_in_file
-// ({ replacements: [{ filePath }] }).
-const SHELL_TOOLS = new Set(["bash", "powershell", "shell", "local_shell", "exec_command", "run_in_terminal"]);
+// ({ replacements: [{ filePath }] }). Antigravity: run_command ({ CommandLine, Cwd }), write_file,
+// edit_file ({ Path, Content, Target, Replacement }), write_to_file, replace_file_content,
+// multi_replace_file_content ({ TargetFile, ReplacementChunks }).
+const SHELL_TOOLS = new Set(["bash", "powershell", "shell", "local_shell", "exec_command", "run_in_terminal", "run_command"]);
 const EDIT_TOOLS = new Set([
   "edit", "write", "create", "multiedit", "notebookedit",
-  "create_file", "replace_string_in_file", "multi_replace_string_in_file", "insert_edit_into_file", "edit_notebook_file",
+  "create_file", "replace_string_in_file", "multi_replace_string_in_file", "insert_edit_into_file", "edit_notebook_file", "write_file", "edit_file", "write_to_file", "replace_file_content", "multi_replace_file_content",
 ]);
 // Any other tool is read by its input: a tool whose name says it only reads is let through; for
 // the rest, values under these keys are read as shell lines or as code, and every value is checked
@@ -49,8 +53,13 @@ function inputStrings(v, key = "", depth = 0, out = []) {
   return out;
 }
 
+/**
+ * Extracts and normalizes tool input arguments from varied agent payloads.
+ * @param {object} input - Raw hook input from the host agent
+ * @returns {object} Normalized tool input dictionary
+ */
 export function toolInput(input) {
-  const ti = input.tool_input ?? input.toolInput ?? input.toolArgs ?? input.input ?? {};
+  const ti = input.tool_input ?? input.toolInput ?? input.toolArgs ?? input.toolCall?.args ?? input.input ?? {};
   if (typeof ti !== "string") return ti || {};
   try { return JSON.parse(ti) || {}; } catch { return { input: ti }; }
 }
@@ -60,16 +69,130 @@ const patchPaths = (ti) => {
   return [...text.matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm)].map((m) => m[1].trim());
 };
 
-// What an edit takes out and puts in, for the hook settings check: old/new strings, a whole new
-// file, or the - and + lines of a patch.
+function applyPatchText(text, patch) {
+  let s = text.replace(/\r\n/g, "\n");
+  const lines = patch.replace(/\r\n/g, "\n").split("\n");
+  if (lines.filter((line) => /^\*\*\* (?:Add|Update|Delete) File:/.test(line)).length > 1) return undefined;
+  if (lines.some((line) => line.startsWith("*** Move to:"))) return undefined;
+  let mode = null;
+  let oldLines = [];
+  let newLines = [];
+  let applied = false;
+  const flushHunk = () => {
+    if (!oldLines.length && !newLines.length) return true;
+    const oldBlock = oldLines.join("\n");
+    const newBlock = newLines.join("\n");
+    oldLines = [];
+    newLines = [];
+    if (oldBlock) {
+      if (!s.includes(oldBlock)) return false;
+      s = s.replace(oldBlock, () => newBlock);
+      applied = true;
+      return true;
+    }
+    if (mode === "add" || !s) {
+      s = s ? `${s}\n${newBlock}` : newBlock;
+      applied = true;
+      return true;
+    }
+    return false;
+  };
+  for (const line of lines) {
+    if (line.startsWith("*** Begin Patch") || line.startsWith("*** End Patch") || line.startsWith("*** End of File") || line.startsWith("*** Move to:")) continue;
+    if (line.startsWith("*** Delete File:")) {
+      if (!flushHunk()) return undefined;
+      s = "";
+      mode = "delete";
+      applied = true;
+      continue;
+    }
+    if (line.startsWith("*** Add File:")) {
+      if (!flushHunk()) return undefined;
+      s = "";
+      mode = "add";
+      continue;
+    }
+    if (line.startsWith("*** Update File:")) {
+      if (!flushHunk()) return undefined;
+      mode = "update";
+      continue;
+    }
+    if (line.startsWith("@@")) {
+      if (!flushHunk()) return undefined;
+      continue;
+    }
+    if (line.startsWith("-")) oldLines.push(line.slice(1));
+    else if (line.startsWith("+")) newLines.push(line.slice(1));
+    else if (line.startsWith(" ")) {
+      oldLines.push(line.slice(1));
+      newLines.push(line.slice(1));
+    }
+  }
+  if (!flushHunk()) return undefined;
+  return applied ? s : undefined;
+}
+
+const replaceInRange = (text, from, to, startLine, endLine) => {
+  const start = Number.isInteger(startLine) && startLine >= 1 ? startLine : 1;
+  const end = Number.isInteger(endLine) && endLine >= start ? endLine : Infinity;
+  if (start === 1 && end === Infinity) return text.split(from).join(to);
+  const lines = text.split("\n");
+  const head = lines.slice(0, start - 1).join("\n");
+  const body = lines.slice(start - 1, end).join("\n").split(from).join(to);
+  const tail = lines.slice(end).join("\n");
+  return [head, body, tail].filter((_, i) => (i === 0 ? start > 1 : i === 2 ? end < lines.length : true)).join("\n");
+};
+
+const editTargetPath = (e) => e?.file_path || e?.filePath || e?.path || e?.notebook_path || e?.target_file || e?.absolute_path || e?.Path || e?.TargetFile || e?.targetFile;
+const sameEditTarget = (ePath, targetAbs, cwd) => {
+  const norm = (p) => p.replace(/\\/g, "/").toLowerCase();
+  const t = norm(path.resolve(targetAbs));
+  if (path.isAbsolute(ePath)) return norm(path.resolve(ePath)) === t;
+  if (cwd) return norm(path.resolve(cwd, ePath)) === t;
+  const rel = norm(ePath).replace(/^(?:\.\/)+/, "");
+  return t === rel || t.endsWith("/" + rel);
+};
+
+/**
+ * Extracts removed and added chunks or whole file content from an edit call.
+ * @param {object} ti - Tool input dictionary for an edit tool
+ * @returns {{ removed: string, added: string, whole: string | undefined, apply: (text: string, targetAbs?: string) => string | undefined }} Extracted text changes
+ */
 function editChange(ti) {
-  const edits = [ti, ...(Array.isArray(ti.edits) ? ti.edits : []), ...(Array.isArray(ti.replacements) ? ti.replacements : [])].filter((e) => e && typeof e === "object");
+  const chunks = [
+    ...(Array.isArray(ti.ReplacementChunks) ? ti.ReplacementChunks : []),
+    ...(Array.isArray(ti.replacement_chunks) ? ti.replacement_chunks : []),
+    ...(Array.isArray(ti.replacementChunks) ? ti.replacementChunks : []),
+  ];
+  const edits = [ti, ...(Array.isArray(ti.edits) ? ti.edits : []), ...(Array.isArray(ti.replacements) ? ti.replacements : []), ...chunks].filter((e) => e && typeof e === "object");
   const pick = (e, keys) => keys.map((k) => e[k]).filter((v) => typeof v === "string");
   const patch = Object.values(ti).filter((v) => typeof v === "string" && v.includes("*** ")).join("\n");
-  const removed = [...edits.flatMap((e) => pick(e, ["old_string", "oldString", "old_str"])), ...patch.split("\n").filter((l) => l.startsWith("-"))].join("\n");
-  const added = [...edits.flatMap((e) => pick(e, ["new_string", "newString", "new_str", "code"])), ...patch.split("\n").filter((l) => l.startsWith("+"))].join("\n");
-  const whole = pick(ti, ["content", "file_text", "CodeContent", "contents"])[0];
-  return { removed, added, whole };
+  const removed = [...edits.flatMap((e) => pick(e, ["old_string", "oldString", "old_str", "Target", "target", "TargetContent"])), ...patch.split("\n").filter((l) => l.startsWith("-"))].join("\n");
+  const added = [...edits.flatMap((e) => pick(e, ["new_string", "newString", "new_str", "code", "Replacement", "replacement", "ReplacementContent"])), ...patch.split("\n").filter((l) => l.startsWith("+"))].join("\n");
+  const whole = pick(ti, ["content", "file_text", "CodeContent", "contents", "Content"])[0];
+  const apply = (text, targetAbs) => {
+    if (whole !== undefined) return whole;
+    if (typeof text !== "string") return undefined;
+    let s = text;
+    let applied = false;
+    for (const e of edits) {
+      const ePath = editTargetPath(e);
+      if (targetAbs && ePath && !sameEditTarget(ePath, targetAbs, ti.Cwd || ti.cwd)) continue;
+      const from = pick(e, ["old_string", "oldString", "old_str", "Target", "target", "TargetContent"])[0];
+      const to = pick(e, ["new_string", "newString", "new_str", "code", "Replacement", "replacement", "ReplacementContent"])[0];
+      if (typeof from === "string" && typeof to === "string" && from) {
+        s = replaceInRange(s, from, to, e.StartLine ?? e.start_line ?? e.startLine, e.EndLine ?? e.end_line ?? e.endLine);
+        applied = true;
+      }
+    }
+    if (patch) {
+      s = applyPatchText(s, patch);
+      if (s === undefined) return undefined;
+      applied = true;
+    }
+    return applied ? s : undefined;
+  };
+  return { removed, added, whole, apply };
 }
 
 // A line runs in PowerShell from a PowerShell tool and in a POSIX shell from Bash or anywhere but
@@ -85,29 +208,35 @@ const shellLine = (name, command, bashIsPosix) => ({ command, ps: /^(powershell|
 //   { kind: "edit", paths, change }       paths empty when the edit names no file the hook can find
 //   { kind: "other", readOnly, deletes, lines, code, prompts, values: [{ text, context }] }
 //                                         any other tool, read by its input
-// opts.bashIsPosix: false when the agent may report a PowerShell tool as Bash.
+/**
+ * Determines the intended action of a tool call (shell execution, file edit, or other tool).
+ * @param {object} input - Tool call payload from the agent hook
+ * @param {object} [opts] - Extraction options
+ * @param {boolean} [opts.bashIsPosix=true] - False when PowerShell tools might be reported as Bash
+ * @returns {object} Action classification with target paths, command lines, or change deltas
+ */
 export function toolAction(input, { bashIsPosix = true } = {}) {
-  const name = String(input.tool_name || input.toolName || "").toLowerCase();
+  const rawName = String(input.tool_name || input.toolName || input.toolCall?.name || "");
+  const name = rawName.toLowerCase();
   const ti = toolInput(input);
   if (SHELL_TOOLS.has(name) || (!name && (ti.command || input.command))) {
     const c = ti.command ?? ti.cmd ?? ti.CommandLine ?? ti.command_line ?? input.command ?? "";
     let command = Array.isArray(c) ? quoteArgv(c) : String(c);
     // A shell call whose command sits under a field the hook does not know: read every value.
     if (!command.trim()) command = inputStrings(ti).map((x) => x.text).join("\n");
-    return { kind: "shell", lines: [shellLine(name, command, bashIsPosix)] };
+    return { kind: "shell", lines: [shellLine(name, command, bashIsPosix)], cwd: ti.Cwd || ti.cwd };
   }
   if (name === "apply_patch" || name === "applypatch") return { kind: "edit", paths: patchPaths(ti), change: editChange(ti) };
   if (EDIT_TOOLS.has(name)) {
-    const one = (e) => e?.file_path || e?.filePath || e?.path || e?.notebook_path || e?.target_file || e?.absolute_path;
-    const paths = [one(ti), ...patchPaths(ti)];
-    for (const list of [ti.replacements, ti.edits]) if (Array.isArray(list)) paths.push(...list.map(one));
-    return { kind: "edit", paths: paths.filter(Boolean).map(String), change: editChange(ti) };
+    const paths = [editTargetPath(ti), ...patchPaths(ti)];
+    for (const list of [ti.replacements, ti.edits]) if (Array.isArray(list)) paths.push(...list.map(editTargetPath));
+    return { kind: "edit", paths: paths.filter(Boolean).map(String), change: editChange(ti), cwd: ti.Cwd || ti.cwd };
   }
   const values = inputStrings(ti);
   return {
     kind: "other",
-    readOnly: ((w) => READ_ONLY_TOOL.test(w[0] || "") && !w.some((x) => ACTING_WORD.test(x)))(nameWords(input.tool_name || input.toolName || "")),
-    deletes: nameWords(input.tool_name || input.toolName || "").some((x) => DELETING_WORD.test(x)),
+    readOnly: ((w) => READ_ONLY_TOOL.test(w[0] || "") && !w.some((x) => ACTING_WORD.test(x)))(nameWords(rawName)),
+    deletes: nameWords(rawName).some((x) => DELETING_WORD.test(x)),
     lines: values.filter((x) => COMMAND_KEY.test(x.key)).map((x) => shellLine(name, x.text, bashIsPosix)),
     code: values.filter((x) => CODE_KEY.test(x.key)).map((x) => x.text),
     prompts: SUBAGENT.test(name) ? [] : values.filter((x) => PROMPT_KEY.test(x.key) || (MESSAGE_KEY.test(x.key) && SENDS.test(name))).map((x) => x.text),
