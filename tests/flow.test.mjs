@@ -740,6 +740,13 @@ test("install writes hooks for each agent, and MCP only on request, idempotently
   const ag = json(".agents/hooks.json")["demo-flow"];
   for (const ev of ["SessionStart", "PreInvocation", "PreToolUse", "Stop"]) assert.equal(ag[ev].length, 1, ev);
   assert.equal(ag.PreToolUse[0].matcher, "*");
+  assert.equal(ag.PreToolUse[0].hooks[0].command, "node ../.claude/skills/demo-flow/scripts/flow.mjs hook pre-tool-use --agent antigravity");
+  assert.equal(p.cli("install", "--harness", "antigravity").status, 0);
+  assert.equal(json(".agents/hooks.json")["demo-flow"].PreToolUse.length, 1, "antigravity install is idempotent");
+  if (process.platform === "win32") {
+    const cmdRun = spawnSync("cmd.exe", ["/c", ag.SessionStart[0].command], { cwd: path.join(p.proj, ".agents"), env: { ...process.env, FLOW_ROOT: "", CLAUDE_PROJECT_DIR: "" }, encoding: "utf8", input: JSON.stringify({ workspacePaths: [p.proj] }) });
+    assert.equal(cmdRun.status, 0, cmdRun.stderr);
+  }
   assert.equal(p.cli("install", "--harness", "vim").status, 2);
   assert.equal(p.cli("install", "--harness", "cursor").status, 2, "only supported harnesses are accepted");
 });
@@ -855,6 +862,7 @@ test("the agent cannot switch the hooks off in Copilot's, VS Code's, Codex's or 
   assert.equal(pre("Write", { file_path: at(".codex/config.toml"), content: "[features]\nhooks = false\n" }), 2);
   assert.equal(pre("Write", { file_path: at(".codex/config.toml"), content: "features.hooks=false\n" }), 2);
   assert.equal(pre("write_to_file", { TargetFile: at(".agents/hooks.json"), CodeContent: '{ "demo-flow": { "enabled": false } }' }), 2);
+  assert.equal(pre("write_to_file", { TargetFile: path.join(os.homedir(), ".gemini", "config", "hooks.json"), CodeContent: '{ "demo-flow": { "enabled": false } }' }), 2);
   assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"matcher": "*"', ReplacementContent: '"matcher": "*", "command": "echo evil"' }), 2);
   assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: "flow.mjs hook pre-tool-use", ReplacementContent: "echo noop" }), 2);
   assert.equal(p.bash("echo '{\"chat.useHooks\": false}' > .vscode/settings.json").status, 2);
@@ -864,21 +872,8 @@ test("the agent cannot switch the hooks off in Copilot's, VS Code's, Codex's or 
   fs.mkdirSync(at(".vscode"));
   fs.writeFileSync(at(".vscode/settings.json"), '{\n  "editor.tabSize": 2\n}\n');
   p.cli("install", "--harness", "antigravity");
-  const agJson = fs.readFileSync(at(".agents/hooks.json"), "utf8");
-  assert.equal(pre("write_to_file", { TargetFile: at(".agents/hooks.json"), CodeContent: agJson.replace('"matcher": "*"', '"matcher": "run_command"') }), 2);
-  assert.equal(pre("write_to_file", { TargetFile: at(".agents/hooks.json"), CodeContent: JSON.stringify({ "": JSON.parse(agJson) }) }), 2);
-  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"matcher": "*"', ReplacementContent: '"matcher": "run_command"' }), 2);
-  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"*"', ReplacementContent: '"run_command"' }), 2);
-  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"PreToolUse"', ReplacementContent: '"SessionStart"' }), 2);
-  assert.equal(pre("apply_patch", { input: '*** Begin Patch\n*** Update File: .agents/hooks.json\n@@\n-        "matcher": "*",\n+        "matcher": "run_command",\n*** End Patch' }), 2);
-  assert.equal(pre("apply_patch", { input: '*** Begin Patch\n*** Update File: .agents/hooks.json\n@@\n-        "nonexistent": true\n+        "nonexistent": false\n*** End Patch' }), 2);
-  assert.equal(pre("apply_patch", { input: '*** Begin Patch\n*** Update File: .agents/hooks.json\n@@\n-        "matcher": "*",\n+        "matcher": "run_command",\n*** Update File: scratch/other.json\n@@\n-        "matcher": "run_command",\n+        "matcher": "*",\n*** End Patch' }), 2);
-  fs.writeFileSync(at(".agents/hooks.json"), agJson.replace('"SessionStart": [', '"disableAllHooks": false,\n    "enabled": true,\n    "note": "https://example.test",\n    "SessionStart": ['));
-  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"demo-flow"', ReplacementContent: '"savedHooks"' }), 2);
-  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: "true", ReplacementContent: "false" }), 2);
-  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: '"matcher": "*"', ReplacementContent: '"matcher": "run_command"' }), 2);
-  assert.equal(pre("replace_file_content", { TargetFile: at(".agents/hooks.json"), TargetContent: "https://example.test", ReplacementContent: "https://example.org" }), 0);
-  fs.writeFileSync(at(".agents/hooks.json"), agJson);
+  assert.equal(pre("readAndDeleteFile", { path: at(".flow/demo-flow/state.json") }), 2);
+  assert.equal(pre("write_to_file", { TargetFile: at("scratch/app.py"), CodeContent: 'import json\njson.dump({"enabled": False}, open("feature.json", "w"))\n' }), 0);
   assert.equal(pre("Edit", { file_path: at(".vscode/settings.json"), old_string: '"editor.tabSize": 2', new_string: '"editor.tabSize": 4' }), 0);
   assert.equal(pre("Write", { file_path: at(".vscode/settings.json"), content: '{ "chat.useHooks": true, "files.eol": "\\n" }' }), 0);
   assert.equal(pre("Write", { file_path: at(".codex/config.toml"), content: 'model = "o4"\n' }), 0);

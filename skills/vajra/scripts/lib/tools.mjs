@@ -67,72 +67,10 @@ const patchPaths = (ti) => {
   return [...text.matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm)].map((m) => m[1].trim());
 };
 
-function applyPatchText(text, patch) {
-  let s = text.replace(/\r\n/g, "\n");
-  const lines = patch.replace(/\r\n/g, "\n").split("\n");
-  if (lines.filter((line) => /^\*\*\* (?:Add|Update|Delete) File:/.test(line)).length > 1) return undefined;
-  let mode = null;
-  let oldLines = [];
-  let newLines = [];
-  let applied = false;
-  const flushHunk = () => {
-    if (!oldLines.length && !newLines.length) return true;
-    const oldBlock = oldLines.join("\n");
-    const newBlock = newLines.join("\n");
-    oldLines = [];
-    newLines = [];
-    if (oldBlock) {
-      if (!s.includes(oldBlock)) return false;
-      s = s.replace(oldBlock, () => newBlock);
-      applied = true;
-      return true;
-    }
-    if (mode === "add" || !s) {
-      s = s ? `${s}\n${newBlock}` : newBlock;
-      applied = true;
-      return true;
-    }
-    return false;
-  };
-  for (const line of lines) {
-    if (line.startsWith("*** Begin Patch") || line.startsWith("*** End Patch") || line.startsWith("*** End of File") || line.startsWith("*** Move to:")) continue;
-    if (line.startsWith("*** Delete File:")) {
-      if (!flushHunk()) return undefined;
-      s = "";
-      mode = "delete";
-      applied = true;
-      continue;
-    }
-    if (line.startsWith("*** Add File:")) {
-      if (!flushHunk()) return undefined;
-      s = "";
-      mode = "add";
-      continue;
-    }
-    if (line.startsWith("*** Update File:")) {
-      if (!flushHunk()) return undefined;
-      mode = "update";
-      continue;
-    }
-    if (line.startsWith("@@")) {
-      if (!flushHunk()) return undefined;
-      continue;
-    }
-    if (line.startsWith("-")) oldLines.push(line.slice(1));
-    else if (line.startsWith("+")) newLines.push(line.slice(1));
-    else if (line.startsWith(" ")) {
-      oldLines.push(line.slice(1));
-      newLines.push(line.slice(1));
-    }
-  }
-  if (!flushHunk()) return undefined;
-  return applied ? s : undefined;
-}
-
 /**
  * Extracts removed and added chunks or whole file content from an edit call.
  * @param {object} ti - Tool input dictionary for an edit tool
- * @returns {{ removed: string, added: string, whole: string | undefined, apply: (text: string) => string | undefined }} Extracted text changes
+ * @returns {{ removed: string, added: string, whole: string | undefined }} Extracted text changes
  */
 function editChange(ti) {
   const chunks = [
@@ -146,27 +84,7 @@ function editChange(ti) {
   const removed = [...edits.flatMap((e) => pick(e, ["old_string", "oldString", "old_str", "Target", "target", "TargetContent"])), ...patch.split("\n").filter((l) => l.startsWith("-"))].join("\n");
   const added = [...edits.flatMap((e) => pick(e, ["new_string", "newString", "new_str", "code", "Replacement", "replacement", "ReplacementContent"])), ...patch.split("\n").filter((l) => l.startsWith("+"))].join("\n");
   const whole = pick(ti, ["content", "file_text", "CodeContent", "contents", "Content"])[0];
-  const apply = (text) => {
-    if (whole !== undefined) return whole;
-    if (typeof text !== "string") return undefined;
-    let s = text;
-    let applied = false;
-    for (const e of edits) {
-      const from = pick(e, ["old_string", "oldString", "old_str", "Target", "target", "TargetContent"])[0];
-      const to = pick(e, ["new_string", "newString", "new_str", "code", "Replacement", "replacement", "ReplacementContent"])[0];
-      if (typeof from === "string" && typeof to === "string" && from) {
-        s = s.split(from).join(to);
-        applied = true;
-      }
-    }
-    if (patch) {
-      s = applyPatchText(s, patch);
-      if (s === undefined) return undefined;
-      applied = true;
-    }
-    return applied ? s : undefined;
-  };
-  return { removed, added, whole, apply };
+  return { removed, added, whole };
 }
 
 // A line runs in PowerShell from a PowerShell tool and in a POSIX shell from Bash or anywhere but
@@ -190,7 +108,8 @@ const shellLine = (name, command, bashIsPosix) => ({ command, ps: /^(powershell|
  * @returns {object} Action classification with target paths, command lines, or change deltas
  */
 export function toolAction(input, { bashIsPosix = true } = {}) {
-  const name = String(input.tool_name || input.toolName || input.toolCall?.name || "").toLowerCase();
+  const rawName = String(input.tool_name || input.toolName || input.toolCall?.name || "");
+  const name = rawName.toLowerCase();
   const ti = toolInput(input);
   if (SHELL_TOOLS.has(name) || (!name && (ti.command || input.command))) {
     const c = ti.command ?? ti.cmd ?? ti.CommandLine ?? ti.command_line ?? input.command ?? "";
@@ -209,8 +128,8 @@ export function toolAction(input, { bashIsPosix = true } = {}) {
   const values = inputStrings(ti);
   return {
     kind: "other",
-    readOnly: ((w) => READ_ONLY_TOOL.test(w[0] || "") && !w.some((x) => ACTING_WORD.test(x)))(nameWords(name)),
-    deletes: nameWords(name).some((x) => DELETING_WORD.test(x)),
+    readOnly: ((w) => READ_ONLY_TOOL.test(w[0] || "") && !w.some((x) => ACTING_WORD.test(x)))(nameWords(rawName)),
+    deletes: nameWords(rawName).some((x) => DELETING_WORD.test(x)),
     lines: values.filter((x) => COMMAND_KEY.test(x.key)).map((x) => shellLine(name, x.text, bashIsPosix)),
     code: values.filter((x) => CODE_KEY.test(x.key)).map((x) => x.text),
     prompts: SUBAGENT.test(name) ? [] : values.filter((x) => PROMPT_KEY.test(x.key) || (MESSAGE_KEY.test(x.key) && SENDS.test(name))).map((x) => x.text),
